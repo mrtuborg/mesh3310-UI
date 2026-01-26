@@ -1,9 +1,6 @@
-using sysbus
-
-mach create "nrf52840-ui"
+mach create
 machine LoadPlatformDescription @platforms/cpus/nrf52840.repl
 
-showAnalyzer sysbus.uart0
-
-sysbus LoadELF @build/zephyr/zephyr.elf
+sysbus LoadELF @/Users/vn/ws/Nokia3310/Nokia3310-UI/build/zephyr/zephyr.elf
 start
+

@@ -7,5 +7,13 @@
 
 ## Run in Renode
 ```bash
-renode renode/run.resc
+renode -P 1234 renode/run.res
+```
+
+## Show LCD screen
+```bash
+python tools/lcd_viewer.py \
+  --address 0x200002A8 \
+  --scale 5 \
+  --fps 10
 ```
