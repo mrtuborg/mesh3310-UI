@@ -1,7 +1,10 @@
 [manifest]
-path = zephyr
+path = west-manifest
 file = west.yml
 
 [zephyr]
 base = zephyr
+
+[build]
+kconfig-warnings-as-errors = false
 

@@ -1,3 +1,28 @@
+# ---- Build output ----
 build/
+out/
+cmake-build-*/
+
+# ---- Zephyr / west workspace ----
+bootloader/
+zephyr/
+modules/
+.west/
+.zephyr/
+tools/
+
+# ---- Python / tooling ----
 .venv/
 __pycache__/
+*.pyc
+.cache/
+
+# ---- Editor / OS junk ----
+.DS_Store
+.idea/
+.vscode/
+@
+
+# ---- Logs ----
+*.log
+

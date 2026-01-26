@@ -1,0 +1,23 @@
+manifest:
+  version: "0.10"
+
+  remotes:
+    - name: zephyrproject
+      url-base: https://github.com/zephyrproject-rtos
+
+  projects:
+    - name: zephyr
+      remote: zephyrproject
+      revision: main
+      path: zephyr
+      import:
+        name-allowlist:
+          - cmsis_6
+          - hal_nordic
+          - nrfxlib
+          - segger
+          - mbedtls
+
+  self:
+    path: .
+
