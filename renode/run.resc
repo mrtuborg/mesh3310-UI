@@ -1,0 +1,9 @@
+using sysbus
+
+mach create "nrf52840-ui"
+machine LoadPlatformDescription @platforms/cpus/nrf52840.repl
+
+showAnalyzer sysbus.uart0
+
+sysbus LoadELF @build/zephyr/zephyr.elf
+start
