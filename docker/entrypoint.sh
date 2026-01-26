@@ -10,11 +10,12 @@ git config --global --add safe.directory /work/zephyr
 if [ ! -d ".west" ]; then
   echo "[docker] Initializing Zephyr workspace (project manifest)..."
   west init -l west-manifest
-  west update
 fi
 
+west update
+
 # West policy: do NOT treat Kconfig warnings as fatal
-west config --local build.kconfig-warnings-as-errors false
+# west config --local build.kconfig-warnings-as-errors false
 
 ZEPHYR_DIR="$(west list zephyr -f '{path}')"
 export ZEPHYR_BASE="${ZEPHYR_DIR}"

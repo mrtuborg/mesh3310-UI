@@ -9,9 +9,7 @@ services:
     entrypoint: ["/work/docker/entrypoint.sh"]
     command: >
      west build
-     -b nrf52840dk/nrf52840
+     -b nrf52dk_nrf52805
      firmware/app
      -d build
-     --
-     -DKCONFIG_WARNINGS_AS_ERRORS=OFF
 
