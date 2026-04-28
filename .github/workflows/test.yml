@@ -1,0 +1,50 @@
+name: UI Tests
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+jobs:
+  # ------------------------------------------------------------------ #
+  # Job 1: host build — runs on every push, no Zephyr needed            #
+  # ------------------------------------------------------------------ #
+  host-tests:
+    name: Host tests (cc, no Zephyr)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build and run
+        run: make -C firmware/tests test
+
+  # ------------------------------------------------------------------ #
+  # Job 2: Ztest via west twister on Linux native_sim                   #
+  # ------------------------------------------------------------------ #
+  ztest:
+    name: Ztest (native_sim, Zephyr 3.6.0)
+    runs-on: ubuntu-latest
+    container:
+      image: zephyrprojectrtos/ci:v0.26.14
+      options: --user root
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: Nokia3310-UI
+
+      - name: West init & update
+        working-directory: Nokia3310-UI
+        run: |
+          west init -l .
+          west update --narrow -o=--depth=1
+
+      - name: Run twister
+        working-directory: Nokia3310-UI
+        run: |
+          west twister \
+            -T firmware/tests \
+            --platform native_sim \
+            --inline-logs \
+            -v

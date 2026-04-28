@@ -5,5 +5,7 @@ project(nokia_ui)
 
 target_sources(app PRIVATE
     src/main.c
+    src/ui_framework.c
+    src/screens.c
 )
 
