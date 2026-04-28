@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: ["**"]
 
+# Image shared by both Zephyr jobs — same as docker/Dockerfile
+env:
+  ZEPHYR_BUILD_IMAGE: ghcr.io/zephyrproject-rtos/zephyr-build:latest
+
 jobs:
   # ------------------------------------------------------------------ #
   # Job 1: host build — runs on every push, no Zephyr needed            #
@@ -20,13 +24,13 @@ jobs:
         run: make -C firmware/tests clean test
 
   # ------------------------------------------------------------------ #
-  # Job 2: Ztest via west twister on Linux native_sim                   #
+  # Job 2: Firmware build for nRF52 — same image as local docker build  #
   # ------------------------------------------------------------------ #
-  ztest:
-    name: Ztest (native_sim, Zephyr 3.6.0)
+  firmware-build:
+    name: Firmware build (nRF52, Zephyr 3.6.0)
     runs-on: ubuntu-latest
     container:
-      image: zephyrprojectrtos/ci:v0.26.14
+      image: ghcr.io/zephyrproject-rtos/zephyr-build:latest
       options: --user root
 
     steps:
@@ -37,7 +41,36 @@ jobs:
       - name: West init & update
         working-directory: Nokia3310-UI
         run: |
-          west init -l .
+          git config --global --add safe.directory "$(pwd)"
+          west init -l west-manifest
+          west update --narrow -o=--depth=1
+
+      - name: Build firmware
+        working-directory: Nokia3310-UI
+        run: |
+          source "$(west list zephyr -f '{path}')/zephyr-env.sh"
+          west build -b nrf52dk_nrf52805 firmware/app -d build
+
+  # ------------------------------------------------------------------ #
+  # Job 3: Ztest via west twister on Linux native_sim                   #
+  # ------------------------------------------------------------------ #
+  ztest:
+    name: Ztest (native_sim, Zephyr 3.6.0)
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/zephyrproject-rtos/zephyr-build:latest
+      options: --user root
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: Nokia3310-UI
+
+      - name: West init & update
+        working-directory: Nokia3310-UI
+        run: |
+          git config --global --add safe.directory "$(pwd)"
+          west init -l west-manifest
           west update --narrow -o=--depth=1
 
       - name: Run twister
