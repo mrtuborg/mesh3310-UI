@@ -233,6 +233,20 @@ The renderer loops `i = 0..4`. For bar `i`, `h = 2 + i*2` and `x = 2 + i*3`. The
 | `WID_STATUS_BAR` battery empty | ✅ | `test_render_battery_empty` |
 | `WID_MENU_LIST` selection highlight | ✅ | `test_render_menu_selection_inverts_row` |
 | `WID_MENU_LIST` visibility (scroll offset) | ✅ (indirect) | scroll state verified via `ui_current_menu_scroll()` |
+| `SCREEN_APPLET` init/tick/render/key routing | ❌ | No host-test coverage; known gap (see §8) |
+| `ui_back()` from applet | ❌ | No host-test coverage; known gap (see §8) |
+| `ui_fb_*` drawing primitives | ❌ | No host-test coverage; known gap (see §8) |
+| Messages applet — inbox UP/DOWN scroll | ❌ | No test; see §13 |
+| Messages applet — inbox OK → `MS_VIEW` transition | ❌ | No test; see §13 |
+| Messages applet — inbox LEFT → `MS_COMPOSE` transition | ❌ | No test; see §13 |
+| Messages applet — view: any key → `MS_INBOX` | ❌ | No test; see §13 |
+| Messages applet — T9 multi-tap cycling | ❌ | No test; see §13 |
+| Messages applet — T9 timeout auto-commit | ❌ | No test; see §13 |
+| Messages applet — T9 uppercase toggle (`*`) | ❌ | No test; see §13 |
+| Messages applet — T9 backspace (DEL) variants | ❌ | No test; see §13 |
+| Messages applet — compose SEND → `MS_SENT` | ❌ | No test; see §13 |
+| Messages applet — `MS_SENT` auto-dismiss | ❌ | No test; see §13 |
+| `nokia_char_raw` cleared on applet `init()` | ❌ | No test; see §13 |
 
 ---
 
@@ -246,6 +260,20 @@ The renderer loops `i = 0..4`. For bar `i`, `h = 2 + i*2` and `x = 2 + i*3`. The
 - **Multi-level navigation depth** — `test_nav_back` covers only one GOTO followed by one BACK. Scenarios involving depth 3 or more, or interleaved MENU navigations at different levels, are not tested.
 - **Status bar separator line at y = 13** — `render_status_bar` calls `fb_hline(13)`, but no test asserts `row_is_full(13)`.
 - **`nokia_keys_raw` polling in the main loop** — the engine's `ui_inject_key` path is fully tested, but the hardware key-scan path (`nokia_keys_raw`) used in the application's `main()` loop is integration-level code and is not exercised by the unit suite.
+- **Applet game logic not unit-tested** — `SCREEN_APPLET` init, tick, render, and `on_key` dispatch are untested. A bug in the framework's applet-dispatch path (e.g., calling `tick()` before `init()`, or calling `render()` on a non-top-of-stack applet) would not be caught.
+- **Snake collision and scoring not covered** — wall collision, self-collision, food collection, score increment, and speed-step logic in `snake.c` have no assertions. Regressions in game rules are invisible to the test suite.
+- **Snake speed system not covered** — `INITIAL_SPEED`, the per-food decrement, and the minimum-speed clamp are not exercised.
+- **`ui_fb_*` drawing primitives not covered** — `ui_fb_clear`, `ui_fb_pixel`, `ui_fb_rect`, `ui_fb_hline`, `ui_fb_text`, and `ui_fb_text_inv` have no pixel-level tests. Clipping behaviour and the inversion logic in `ui_fb_text_inv` are untested.
+- **`nokia_char_raw` and Messages applet not tested** — the ASCII text-input byte and all associated applet behaviour are not exercised. Specific gaps include:
+  - **T9 multi-tap cycling** — pressing the same key repeatedly should cycle through characters; `t9_tap` wrap-around at the end of the character string is untested.
+  - **T9 timeout auto-commit** — after 8 ticks without a new tap, `msg_tick()` should call `t9_commit()`; this time-based path is not covered.
+  - **T9 uppercase/lowercase toggle** — pressing `*` should commit any pending char and flip `t9_upper`; both the commit-first and the toggle behaviour are untested.
+  - **T9 backspace distinction** — with a pending char, `KEY_LEFT` should cancel it without committing; with no pending char and a non-empty buffer, it should remove the last committed char; with an empty buffer, it should exit to `MS_INBOX`. All three branches are untested.
+  - **Messages inbox scroll** — `KEY_UP` / `KEY_DOWN` move the cursor and clamp at 0 / `INBOX_COUNT-1`; clamping behaviour is untested.
+  - **Messages view state transition** — `KEY_OK` on the inbox should navigate to `MS_VIEW`; any subsequent key should return to `MS_INBOX`. Neither transition is tested.
+  - **Compose send flow** — `KEY_RIGHT` in `MS_COMPOSE` should commit any pending char and transition to `MS_SENT`; this path is untested.
+  - **`MS_SENT` auto-dismiss** — after 15 ticks in `MS_SENT`, the applet should return to `MS_INBOX` automatically; the tick-countdown is untested.
+  - **`nokia_char_raw` cleared on `msg_init()`** — the applet writes `nokia_char_raw = 0` on entry to discard stale input; this invariant is untested.
 
 ---
 
@@ -330,3 +358,97 @@ Use `TCHECK_EQ` when comparing integers where the diagnostic message benefits fr
 | Zephyr ARM (Cortex-M) | `arm-zephyr-eabi-gcc` | Any ARM board (e.g. `nrf52840dk`) | `west build -b nrf52840dk/nrf52840 firmware/tests/ui` — **builds only, not runnable without hardware** |
 
 The standalone mode has no dependencies beyond a C99 compiler and standard `libc`. It is the recommended first check before every commit. The `native_sim` mode provides Ztest's structured reporting, per-suite isolation, and compatibility with Twister's CI integration, but requires a Zephyr workspace (`west init` / `west update`) and the Zephyr SDK.
+
+---
+
+## 12. Applet System Test Scenarios
+
+The following test cases are **specified but not yet implemented** as code. They document the intended behaviour of the applet dispatch path and serve as a guide for a future `applet` test suite. All scenarios assume a test fixture that registers a mock `applet_t` whose callbacks set observable flags.
+
+### Fixture
+
+```c
+static int mock_init_count   = 0;
+static int mock_tick_count   = 0;
+static int mock_render_count = 0;
+static nokia_key_t mock_last_key = KEY_NONE;
+
+static void mock_init(void)            { mock_init_count++; }
+static void mock_tick(void)            { mock_tick_count++; }
+static void mock_render(void)          { mock_render_count++; }
+static void mock_on_key(nokia_key_t k) { mock_last_key = k; }
+
+applet_t mock_applet = {
+    .init   = mock_init,
+    .tick   = mock_tick,
+    .render = mock_render,
+    .on_key = mock_on_key,
+};
+```
+
+`SCR_APPLET_TEST` is added to the test screen table using `APPLET_SCREEN("MockApplet", &mock_applet)`.
+
+### Test cases
+
+| # | Test name | Setup | Action | Expected outcome |
+|---|---|---|---|---|
+| A1 | `test_applet_goto_calls_init` | `INIT_AT(SCR_HOME)` | `ui_inject_key(KEY_LEFT)` (binds `GOTO(SCR_APPLET_TEST)`) | `mock_init_count == 1` |
+| A2 | `test_applet_tick_and_render_called` | `INIT_AT(SCR_APPLET_TEST)` | `ui_tick()` | `mock_tick_count == 1 && mock_render_count == 1` |
+| A3 | `test_applet_tick_not_called_when_not_top` | `INIT_AT(SCR_APPLET_TEST)`, push a second screen | `ui_tick()` | `mock_tick_count == 0` (applet is not top-of-stack) |
+| A4 | `test_applet_on_key_routed` | `INIT_AT(SCR_APPLET_TEST)` | `ui_inject_key(KEY_UP)` | `mock_last_key == KEY_UP` |
+| A5 | `test_applet_ui_back_returns_to_previous` | `INIT_AT(SCR_HOME)`, navigate to `SCR_APPLET_TEST` | Call `ui_back()` from inside `mock_on_key` when `KEY_RIGHT` | `ui_current_screen_id() == SCR_HOME` after the key event |
+| A6 | `test_applet_init_called_once_per_push` | `INIT_AT(SCR_HOME)` | `GOTO(SCR_APPLET_TEST)`, `ui_back()`, `GOTO(SCR_APPLET_TEST)` | `mock_init_count == 2` (fresh init on second push) |
+| A7 | `test_static_screen_unaffected_below_applet` | `INIT_AT(SCR_HOME)`, push `SCR_APPLET_TEST` | `ui_tick()` (applet is top-of-stack) | `nokia_fb` does **not** contain pixels from `SCR_HOME`'s `HLINE(25)` widget — the widget loop for the lower screen is not executed |
+| A8 | `test_applet_key_not_routed_to_screen_action` | Screen def for `SCR_APPLET_TEST` has `on_left = GOTO(SCR_HOME)` (hypothetical) | `ui_inject_key(KEY_LEFT)` while applet is top | `ui_current_screen_id() == SCR_APPLET_TEST` (applet's `on_key` is called instead of the screen-level action) |
+
+**Implementation note:** Tests A1–A8 require no changes to `ui_framework.c` to become runnable; they only require adding `SCR_APPLET_TEST` to the test fixture in `test_main.c` and implementing the mock applet. The applet dispatch logic is already present in the framework.
+
+---
+
+## 13. Messages Applet and T9 Test Scenarios
+
+The following test cases are **specified but not yet implemented**. They document the intended behaviour of the Messages applet (`applet_messages.c`) and the T9 multi-tap input system. All scenarios assume the test builds include `applet_messages.c` and link `nokia_char_raw` as a writable global.
+
+### Fixture
+
+```c
+/* Expose nokia_char_raw for direct injection in tests */
+extern volatile uint8_t nokia_char_raw;
+
+/* Helper: push SCR_MESSAGES onto the nav stack */
+#define INIT_MESSAGES() do {          \
+    ui_init(g_screens, SCR_COUNT, SCR_MAIN_MENU); \
+    ui_inject_key(KEY_LEFT); /* GOTO(SCR_MESSAGES) via menu item */ \
+} while (0)
+
+/* Helper: pump N ticks through the applet */
+static void tick_n(int n) { for (int i = 0; i < n; i++) ui_tick(); }
+
+/* Helper: inject a char key */
+static void inject_char(char ch) { nokia_char_raw = (uint8_t)ch; ui_tick(); }
+```
+
+### Test Cases
+
+| # | Test name | Setup | Action | Expected outcome |
+|---|-----------|-------|--------|-----------------|
+| M1 | `test_msg_inbox_cursor_down` | `INIT_MESSAGES()` — starts in `MS_INBOX`, cursor=0 | `ui_inject_key(KEY_DOWN)` | Internal inbox cursor advances to 1 (verified via render: row 1 is inverted, row 0 is not) |
+| M2 | `test_msg_inbox_cursor_clamps_at_bottom` | `INIT_MESSAGES()`, send 10 × `KEY_DOWN` | — | Cursor clamped at 2 (`INBOX_COUNT-1`); no out-of-bounds access |
+| M3 | `test_msg_inbox_ok_enters_view` | `INIT_MESSAGES()` | `ui_inject_key(KEY_OK)` | State transitions to `MS_VIEW`; `ui_tick()` renders sender name "Alice" in title area (pixels set in y=1..8 region) |
+| M4 | `test_msg_view_any_key_returns_inbox` | `INIT_MESSAGES()`, then `KEY_OK` to enter `MS_VIEW` | `ui_inject_key(KEY_DOWN)` | State returns to `MS_INBOX`; `ui_tick()` renders "Messages" title |
+| M5 | `test_msg_compose_t9_single_tap` | `INIT_MESSAGES()`, then `KEY_LEFT` to enter `MS_COMPOSE` | `inject_char('2')` | Pending char is `'A'` (uppercase default); rendered inverted at cursor; `compose_buf` is still empty (not yet committed) |
+| M6 | `test_msg_compose_t9_multi_tap_cycles` | `INIT_MESSAGES()`, enter `MS_COMPOSE` | `inject_char('2')` three times in quick succession | After tap 1: pending = `'A'`; after tap 2: pending = `'B'`; after tap 3: pending = `'C'` |
+| M7 | `test_msg_compose_t9_timeout_commits` | `INIT_MESSAGES()`, enter `MS_COMPOSE`, `inject_char('2')` | `tick_n(8)` (T9_TIMEOUT ticks without another tap) | `compose_buf[0] == 'A'`; `t9_key` reset to −1; cursor advances; blinking underscore visible |
+| M8 | `test_msg_compose_t9_uppercase_toggle` | `INIT_MESSAGES()`, enter `MS_COMPOSE` | `inject_char('*')` | `t9_upper` flips to `false`; title renders `"Write Msg [a]"`; subsequent `inject_char('2')` yields pending char `'a'` |
+| M9 | `test_msg_compose_del_cancels_pending` | `INIT_MESSAGES()`, enter `MS_COMPOSE`, `inject_char('3')` (pending = `'D'`) | `ui_inject_key(KEY_LEFT)` | Pending char cancelled (`t9_key == -1`); `compose_buf` unchanged (empty); state remains `MS_COMPOSE` |
+| M10 | `test_msg_compose_del_removes_committed` | `INIT_MESSAGES()`, enter `MS_COMPOSE`, `inject_char('2')`, `tick_n(8)` (commits `'A'`) | `ui_inject_key(KEY_LEFT)` | `compose_buf` is now empty; `compose_len == 0`; state remains `MS_COMPOSE` |
+| M11 | `test_msg_compose_del_exits_on_empty` | `INIT_MESSAGES()`, enter `MS_COMPOSE` (buffer empty) | `ui_inject_key(KEY_LEFT)` | State transitions back to `MS_INBOX` |
+| M12 | `test_msg_compose_send_transitions_sent` | `INIT_MESSAGES()`, enter `MS_COMPOSE` | `ui_inject_key(KEY_RIGHT)` | State transitions to `MS_SENT`; `ui_tick()` renders "Message sent!" banner (pixels set in y=18..28 region) |
+| M13 | `test_msg_sent_auto_dismiss` | `INIT_MESSAGES()`, enter `MS_COMPOSE`, `KEY_RIGHT` → `MS_SENT` | `tick_n(15)` | After 15 ticks, state returns to `MS_INBOX` automatically |
+| M14 | `test_msg_init_clears_nokia_char_raw` | Set `nokia_char_raw = '5'` before navigating to `MS_MESSAGES` | Navigate to `SCR_MESSAGES` (calls `msg_init()`) | `nokia_char_raw == 0` immediately after `msg_init()` runs; stale keypress not delivered to compose |
+
+**Implementation note:** Tests M1–M14 require:
+1. `applet_messages.c` and `applet_messages.h` compiled into the test binary.
+2. `nokia_char_raw` accessible as a writable global (already `extern volatile uint8_t` in `main.c`).
+3. A way to inspect internal applet state or infer it from `nokia_fb` pixels. For state transitions (M3, M4, M11, M12, M13) the render output is the observable: check for known text or pixel patterns in the rendered frame. For T9 state (M5, M6, M7, M8) expose a test accessor or verify via pixel rendering.
+

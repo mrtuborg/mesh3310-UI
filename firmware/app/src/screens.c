@@ -46,6 +46,8 @@
 
 #include <zephyr/kernel.h>
 #include "ui_framework.h"
+#include "applet_messages.h"
+#include "game_snake.h"
 
 /* ------------------------------------------------------------------ */
 /* Screen IDs                                                           */
@@ -55,6 +57,7 @@ enum {
     SCR_MAIN_MENU,
     SCR_MESSAGES,
     SCR_GAMES,
+    SCR_SNAKE,
     SCR_PROFILES,
     SCR_SETTINGS,
     SCR_COUNT,
@@ -65,8 +68,8 @@ enum {
 /* ================================================================== */
 static const widget_t idle_widgets[] = {
     STATUS_BAR(),
-    LABEL_SCALED(15, 18, "12:34", 2),
-    LABEL_CENTER(30, "LORA"),
+    LABEL_SCALED(15, 14, "12:34", 2),
+    LABEL_CENTER(31, "LORA"),
     SOFTKEY_BAR("MENU", "NAMES"),
 };
 
@@ -85,16 +88,6 @@ static const widget_t main_menu_widgets[] = {
     HLINE(9),
     MENU_LIST(),
     SOFTKEY_BAR("SELECT", "BACK"),
-};
-
-/* ================================================================== */
-/* Messages screen                                                      */
-/* ================================================================== */
-static const widget_t messages_widgets[] = {
-    LABEL_CENTER(1, "Messages"),
-    HLINE(9),
-    LABEL_CENTER(22, "No messages"),
-    SOFTKEY_BAR("", "BACK"),
 };
 
 /* ================================================================== */
@@ -153,21 +146,19 @@ const screen_def_t g_screens[SCR_COUNT] = {
         .on_right     = BACK(),
     },
 
-    [SCR_MESSAGES] = {
-        .name         = "Messages",
-        .type         = SCREEN_STATIC,
-        .widgets      = messages_widgets,
-        .widget_count = ARRAY_SIZE(messages_widgets),
-        .on_right     = BACK(),
-    },
+    [SCR_MESSAGES] = APPLET_SCREEN("Messages", &messages_applet),
 
     [SCR_GAMES] = {
         .name         = "Games",
         .type         = SCREEN_STATIC,
         .widgets      = games_widgets,
         .widget_count = ARRAY_SIZE(games_widgets),
+        .on_left      = GOTO(SCR_SNAKE),
+        .on_ok        = GOTO(SCR_SNAKE),
         .on_right     = BACK(),
     },
+
+    [SCR_SNAKE] = APPLET_SCREEN("Snake", &snake_applet),
 
     [SCR_PROFILES] = {
         .name         = "Profiles",

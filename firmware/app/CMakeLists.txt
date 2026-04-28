@@ -7,5 +7,7 @@ target_sources(app PRIVATE
     src/main.c
     src/ui_framework.c
     src/screens.c
+    src/game_snake.c
+    src/applet_messages.c
 )
 

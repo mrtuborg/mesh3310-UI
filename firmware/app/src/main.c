@@ -13,6 +13,14 @@
 __attribute__((used))
 volatile uint8_t nokia_keys_raw;
 
+/*
+ * Character key input for text entry (e.g. SMS/T9).
+ * lcd_viewer.py writes the ASCII code of the pressed key (0-9, *, #).
+ * Cleared by the consumer after reading.  Unused until SMS is implemented.
+ */
+__attribute__((used))
+volatile uint8_t nokia_char_raw;
+
 /* Defined in screens.c */
 extern const screen_def_t g_screens[];
 extern const int          g_screen_count;

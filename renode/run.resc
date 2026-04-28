@@ -1,6 +1,7 @@
 mach create
 machine LoadPlatformDescription @platforms/cpus/nrf52840.repl
 
-sysbus LoadELF @/Users/vn/ws/Nokia3310/Nokia3310-UI/build/zephyr/zephyr.elf
-start
+# Path is relative to the project root (where you run renode from)
+sysbus LoadELF @build/zephyr/zephyr.elf
 
+start

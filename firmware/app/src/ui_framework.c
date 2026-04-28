@@ -215,6 +215,19 @@ static void fb_draw_string_scaled(int x, int y, const char *s, int scale)
 }
 
 /* ------------------------------------------------------------------ */
+/* Public drawing API — thin wrappers for use by applets               */
+/* ------------------------------------------------------------------ */
+void ui_fb_clear(void)                              { fb_clear(); }
+void ui_fb_pixel(int x, int y)                      { fb_set_pixel(x, y); }
+void ui_fb_rect(int x, int y, int w, int h)         { fb_fill_rect(x, y, w, h); }
+void ui_fb_hline(int y, int x0, int x1)
+{
+    for (int x = x0; x <= x1; x++) fb_set_pixel(x, y);
+}
+void ui_fb_text(int x, int y, const char *s)        { fb_draw_string(x, y, s, 0); }
+void ui_fb_text_inv(int x, int y, const char *s)    { fb_draw_string(x, y, s, 1); }
+
+/* ------------------------------------------------------------------ */
 /* Widget renderers                                                     */
 /* ------------------------------------------------------------------ */
 static int g_signal  = 5;  /* 0–5  */
@@ -363,6 +376,14 @@ static void exec_action(action_t a)
             nav_stack[nav_depth].screen_id = a.screen_id;
             nav_stack[nav_depth].cursor    = 0;
             nav_stack[nav_depth].scroll    = 0;
+            /* Initialise applet when first entering an applet screen */
+            {
+                const screen_def_t *ns = &g_screens[a.screen_id];
+                if (ns->type == SCREEN_APPLET &&
+                        ns->applet && ns->applet->init) {
+                    ns->applet->init();
+                }
+            }
         }
         break;
     case ACT_BACK:
@@ -384,6 +405,14 @@ void ui_inject_key(nokia_key_t key)
 {
     const screen_def_t *scr = cur_screen();
     nav_entry_t        *nav = nav_top();
+
+    /* Applet screens take all keys via their own handler */
+    if (scr->type == SCREEN_APPLET) {
+        if (scr->applet && scr->applet->on_key) {
+            scr->applet->on_key(key);
+        }
+        return;
+    }
 
     if (scr->type == SCREEN_MENU) {
         switch (key) {
@@ -481,7 +510,20 @@ void ui_init(const screen_def_t *screens, int count, int initial)
 
 void ui_tick(void)
 {
+    const screen_def_t *scr = cur_screen();
+
+    if (scr->type == SCREEN_APPLET && scr->applet) {
+        scr->applet->tick();
+        scr->applet->render();
+        return;
+    }
+
     render_screen();
+}
+
+void ui_back(void)
+{
+    if (nav_depth > 0) nav_depth--;
 }
 
 int ui_current_screen_id(void)

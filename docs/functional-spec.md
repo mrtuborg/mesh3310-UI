@@ -12,10 +12,14 @@ The Nokia 3310 UI Framework is a declarative, data-driven UI engine for a Nokia 
 +------------------+
 |     main.c       |  Zephyr main loop (100 ms tick)
 |  nokia_keys_raw  |  memory-mapped key byte, polled each iteration
+|  nokia_char_raw  |  memory-mapped ASCII byte (T9 text input)
 +--------+---------+
          |  ui_init / ui_inject_key / ui_tick
 +--------v---------+
 |  ui_framework.c  |  navigation stack, key routing, widget rendering
+|   applet layer   |  init/tick/render/on_key dispatch for SCREEN_APPLET
+|  Messages applet |  T9 multi-tap text entry; 4 states: inbox/view/compose/sent
+|  Snake applet    |  single-player Snake game
 +--------+---------+
          |  writes
 +--------v---------+
@@ -23,14 +27,15 @@ The Nokia 3310 UI Framework is a declarative, data-driven UI engine for a Nokia 
 +------------------+
          ^  sysbus ReadBytes <address> 504
          |
-+--------+---------+         +---------------------+
-|     Renode       |<--------| lcd_viewer.py        |
-| nrf52840 + ELF   | socket  | Tkinter display      |
-+------------------+ :1234   | --address <nokia_fb> |
-                             +---------------------+
++--------------------+    +----------------------------------------------+
+|     Renode         |<---| lcd_viewer.py (two separate windows)          |
+| nrf52840 + ELF     |    | Win 1 "Nokia 3310 — Screen": LCD + bezel      |
++--------------------+    | Win 2 "Nokia 3310 — Keys": nav + T9 keypad   |
+  Telnet :1234            | matplotlib/macOS                               |
+                          +----------------------------------------------+
 ```
 
-`nokia_fb` is declared `__attribute__((used))` at file scope in `ui_framework.c`. Its address is fixed at link time by the linker script. `lcd_viewer.py` must be invoked with `--address` set to that same address. The `nokia_keys_raw` byte in `main.c` is similarly `__attribute__((used))` and `volatile`; Renode writes to it via `sysbus WriteByteToAddress`.
+`nokia_fb` is declared `__attribute__((used))` at file scope in `ui_framework.c`. Its address is fixed at link time by the linker script. `lcd_viewer.py` must be invoked with `--address` set to that same address. The `nokia_keys_raw` byte in `main.c` is similarly `__attribute__((used))` and `volatile`; Renode writes to it via `sysbus WriteByteToAddress`. `nokia_char_raw` is a second `volatile uint8_t` at file scope in `main.c`; see §3.4. `lcd_viewer.py` uses the `macosx` matplotlib backend rather than tkinter; see ADR-005. `lcd_viewer.py` opens **two separate windows** — a pure LCD display and a controls panel; see §19 for the full two-window design and navigation button layout.
 
 ---
 
@@ -77,6 +82,19 @@ All values fit in one byte; only one key is processed per 100 ms tick.
 
 ```
 sysbus WriteByteToAddress <nokia_keys_raw_address> 0x01   # KEY_LEFT
+```
+
+`nokia_char_raw` is a second `volatile uint8_t` at file scope in `main.c`, declared `__attribute__((used))`. It carries the ASCII character code of the digit or symbol key pressed on the T9 keypad (e.g., `'2'` for the ABC key, `'*'` for case-toggle, `'#'` for space). `nokia_char_raw` is **independent** of `nokia_keys_raw`; both may be non-zero in the same tick.
+
+The **Messages applet** (`applet_messages.c`) is the primary consumer of `nokia_char_raw`:
+
+- **`msg_tick()`** reads `nokia_char_raw` at the start of each tick; if non-zero, copies the value, **clears `nokia_char_raw` to 0** immediately, and passes the ASCII code to `t9_handle()` (only when the applet is in `MS_COMPOSE` state). The applet clears the variable directly on the `volatile` declaration.
+- **`msg_init()`** writes `nokia_char_raw = 0` before the applet becomes active, discarding any stale keypress that may have been injected while a different screen was on top of the navigation stack.
+
+No other screen type or applet consumes `nokia_char_raw`. Writing from Renode:
+
+```
+sysbus WriteByteToAddress <nokia_char_raw_address> 0x41   # 'A'
 ```
 
 ---
@@ -155,6 +173,31 @@ The `on_left`, `on_up`, `on_down`, and `on_ok` fields of the screen descriptor a
 - `0 <= scroll <= cursor <= item_count-1`
 - `cursor < scroll + MENU_VISIBLE_ITEMS`
 - When the cursor leaves the visible window, scroll adjusts by exactly 1 to restore the invariant.
+
+### 6.3 `SCREEN_APPLET`
+
+An applet screen wraps an `applet_t` struct pointer stored in the `screen_def_t`. Instead of a widget array, the framework delegates all rendering and input handling to the applet's four callbacks.
+
+**Lifecycle:**
+
+| Event | Framework action |
+|---|---|
+| Screen pushed onto stack (`ACT_GOTO`) | Calls `applet->init()` once |
+| Each `ui_tick()` while screen is top-of-stack | Calls `applet->tick()` then `applet->render()` |
+| Key event while screen is top-of-stack | Calls `applet->on_key(key)` |
+| `ui_back()` called from within applet | Pops the applet screen, returns to previous screen |
+
+The `applet->init()` call resets all applet-internal state. The `applet->render()` call writes directly to `nokia_fb` via the drawing primitives in §12 (`ui_fb_clear`, `ui_fb_pixel`, `ui_fb_rect`, `ui_fb_hline`, `ui_fb_text`, `ui_fb_text_inv`). `ui_tick()` does **not** call `fb_clear()` before delegating to the applet; the applet is responsible for clearing the framebuffer via `ui_fb_clear()` at the start of each render.
+
+**Declaring an applet screen** uses the `APPLET_SCREEN` macro (§13):
+
+```c
+APPLET_SCREEN("Snake", &snake_applet)
+```
+
+This expands to a `screen_def_t` with `type = SCREEN_APPLET` and `applet = &snake_applet`. The `name` field is used for debugging only.
+
+**`applet_t` interface** — see §17 for the full struct definition and implementation guide.
 
 ---
 
@@ -387,6 +430,48 @@ Returns `nav_stack[nav_depth].scroll`. Returns 0 on `SCREEN_STATIC` screens.
 
 ---
 
+### `void ui_back(void)`
+
+Equivalent to executing `ACT_BACK` from code. Decrements `nav_depth` if `nav_depth > 0`; no-op at the root. Called by applets (see §17) to return to the previous screen without a key binding.
+
+---
+
+### `void ui_fb_clear(void)`
+
+Clears the entire framebuffer to zero. Equivalent to `memset(nokia_fb, 0, 504)`. Applet `render()` callbacks must call this at the start of each frame.
+
+---
+
+### `void ui_fb_pixel(int x, int y)`
+
+Sets the pixel at `(x, y)`. Silently discards coordinates outside `[0,83]×[0,47]`.
+
+---
+
+### `void ui_fb_rect(int x, int y, int w, int h)`
+
+Draws a filled rectangle with top-left corner `(x, y)`, width `w`, height `h`. Clips to screen bounds.
+
+---
+
+### `void ui_fb_hline(int y, int x0, int x1)`
+
+Draws a horizontal line at row `y` from column `x0` to `x1` (inclusive). Clips to screen bounds. (Note: the internal `fb_hline(y)` helper used by widget renderers draws a full-width line; `ui_fb_hline` is the applet-facing variant with explicit `x` range.)
+
+---
+
+### `void ui_fb_text(int x, int y, const char *s)`
+
+Renders string `s` left-aligned at `(x, y)` using `font_5x7` at scale 1. Characters outside ASCII 0x20–0x7E are drawn as `'?'`.
+
+---
+
+### `void ui_fb_text_inv(int x, int y, const char *s)`
+
+Renders string `s` inverted (white-on-black). Fills a rectangle behind the text, then draws each glyph XOR'd. Used for highlighted menu items and applet HUD overlays.
+
+---
+
 ## 13. Macro Reference
 
 | Macro | Expansion | Usage context | Constraints |
@@ -402,6 +487,7 @@ Returns `nav_stack[nav_depth].scroll`. Returns 0 on `SCREEN_STATIC` screens.
 | `SOFTKEY_BAR(l,r)` | `{ WID_SOFTKEY_BAR, 0, 40, 1, l, r }` | `widget_t` array element | At most once per screen |
 | `HLINE(py)` | `{ WID_HLINE, 0, py, 1, 0, 0 }` | `widget_t` array element | — |
 | `MENU_LIST()` | `{ WID_MENU_LIST, 2, 15, 1, 0, 0 }` | `widget_t` array element | Only valid in `SCREEN_MENU` screens |
+| `APPLET_SCREEN(name, ptr)` | `{ .name=(name), .type=SCREEN_APPLET, .applet=(ptr) }` | `screen_def_t` array element | `ptr` must be a non-NULL `applet_t *` constant |
 | `ARRAY_SIZE(arr)` | `sizeof(arr)/sizeof((arr)[0])` | Any array size expression | Argument must be an array, not a pointer |
 
 All brace-list macros must appear in initialiser context only; they cannot be assigned to an existing variable.
@@ -527,3 +613,447 @@ No other files require modification.
 - **Centered text is clamped to 14 characters.** `fb_draw_string_centered` clamps `len` to `LCD_WIDTH / 6 = 14` before computing the centre offset. Characters beyond position 14 are not rendered.
 
 - **`g_signal` defaults to 5, `g_battery` defaults to 3** (full bars, full battery) at startup. Call `ui_set_signal` / `ui_set_battery` before the first `ui_tick()` to change initial values.
+
+---
+
+## 17. Applet System
+
+### 17.1 `applet_t` Interface
+
+```c
+typedef struct {
+    void (*init)(void);
+    void (*tick)(void);
+    void (*render)(void);
+    void (*on_key)(nokia_key_t key);
+} applet_t;
+```
+
+All four function pointers must be non-NULL. The framework never calls any field conditionally; a no-op stub must be provided if a callback has nothing to do.
+
+| Callback | Called by | Purpose |
+|---|---|---|
+| `init` | Framework, once, when the applet screen is pushed | Reset all applet-internal state to initial values |
+| `tick` | Framework, every `ui_tick()` while top-of-stack | Advance game/applet logic (move objects, update timers, etc.) |
+| `render` | Framework, immediately after `tick()` every frame | Write the current frame to `nokia_fb` via `ui_fb_*` primitives |
+| `on_key` | Framework, on each `ui_inject_key()` call while top-of-stack | Handle a single key event; may call `ui_back()` to exit |
+
+### 17.2 Lifecycle
+
+```
+ACT_GOTO(SCR_MY_APPLET)
+    └─► applet->init()          ← reset state
+
+    repeat every 100 ms tick:
+        applet->tick()          ← advance logic
+        applet->render()        ← draw frame
+
+    on key event:
+        applet->on_key(key)     ← handle input
+
+    if ui_back() is called:
+        └─► nav_depth--         ← applet screen popped
+            resume previous screen's tick/render cycle
+```
+
+`ui_tick()` skips the widget-loop entirely for `SCREEN_APPLET` screens. Instead it calls `tick()` then `render()`. The applet is responsible for managing its own state across ticks; no state is stored in the `nav_entry_t` (cursor and scroll fields are unused for applet screens).
+
+### 17.3 Drawing API
+
+Applets draw using the `ui_fb_*` primitives described in §12. All primitives clip to `[0,83]×[0,47]`.
+
+| Primitive | Description |
+|---|---|
+| `ui_fb_clear()` | Clear entire framebuffer — call first in every `render()` |
+| `ui_fb_pixel(x, y)` | Set a single pixel |
+| `ui_fb_rect(x, y, w, h)` | Filled rectangle |
+| `ui_fb_hline(y, x0, x1)` | Horizontal line segment |
+| `ui_fb_text(x, y, s)` | Normal (dark on light) text |
+| `ui_fb_text_inv(x, y, s)` | Inverted (light on dark) text for highlights or HUD |
+
+### 17.4 Exiting an Applet
+
+An applet exits by calling `ui_back()` from within `on_key()` (or from `tick()` if the applet ends automatically). This is exactly equivalent to the user pressing a key bound to `BACK()` on a `SCREEN_STATIC` screen.
+
+```c
+static void my_applet_on_key(nokia_key_t key) {
+    if (key == KEY_RIGHT) {
+        ui_back();   /* return to caller screen */
+        return;
+    }
+    /* ... handle other keys ... */
+}
+```
+
+### 17.5 Implementing a New Applet
+
+**Step 1 — Define the applet struct:**
+
+```c
+static void my_applet_init(void);
+static void my_applet_tick(void);
+static void my_applet_render(void);
+static void my_applet_on_key(nokia_key_t key);
+
+applet_t my_applet = {
+    .init   = my_applet_init,
+    .tick   = my_applet_tick,
+    .render = my_applet_render,
+    .on_key = my_applet_on_key,
+};
+```
+
+**Step 2 — Implement the four callbacks.** Keep `tick()` and `render()` separate; `tick()` must not write pixels, `render()` must not mutate game state.
+
+**Step 3 — Declare the screen in `screens.c`:**
+
+```c
+enum {
+    /* ... existing IDs ... */
+    SCR_MY_APPLET,
+    SCR_COUNT,
+};
+
+/* extern declaration for the applet struct defined in my_applet.c */
+extern applet_t my_applet;
+
+const screen_def_t g_screens[SCR_COUNT] = {
+    /* ... existing screens ... */
+    [SCR_MY_APPLET] = APPLET_SCREEN("MyApplet", &my_applet),
+};
+```
+
+**Step 4 — Navigate to it** by adding `GOTO(SCR_MY_APPLET)` to an existing menu item or key binding. No changes to `ui_framework.c` are required.
+
+---
+
+## 18. Built-in Applets — Snake
+
+### 18.1 Overview
+
+The Snake applet (`snake_applet` in `snake.c`) is a single-player Snake game that runs as a `SCREEN_APPLET`. The game area occupies pixel rows 8–47 (40 px tall); the top 8 rows are reserved for the HUD (score, speed indicator).
+
+### 18.2 Grid
+
+- **Cell size:** 4×4 pixels.
+- **Grid dimensions:** 21 columns × 10 rows.
+- **Game area origin:** x=0, y=8 (pixel coordinates of cell (0,0)).
+- Each cell maps to pixels `(col*4, 8 + row*4)` through `(col*4+3, 8 + row*4+3)`.
+
+### 18.3 Speed System
+
+| Constant | Value | Meaning |
+|---|---|---|
+| `INITIAL_SPEED` | 4 | Starting tick delay (ticks per snake move) |
+| Speed decrement | −1 per 3 food items eaten | Delay decreases as score rises |
+| Minimum speed | 1 | Snake moves every tick at maximum speed |
+
+Speed is stored as a tick counter `speed_timer`; the snake body advances only when `speed_timer` reaches zero. After each food collection the `speed_step` counter increments; every third food item decreases `speed_delay` by 1 (floor 1).
+
+### 18.4 Controls
+
+| Key | In-game action | Game-over action |
+|---|---|---|
+| `KEY_UP` | Steer up | — |
+| `KEY_DOWN` | Steer down | — |
+| `KEY_LEFT` | Steer left | — |
+| `KEY_RIGHT` | Steer right / exit to menu | Return to menu (`ui_back()`) |
+| `KEY_OK` | Pause / resume | Restart game (`applet->init()`) |
+
+Reverse-direction inputs (e.g., UP while moving DOWN) are silently ignored to prevent self-collision on the next tick.
+
+### 18.5 Game-Over Flow
+
+When the snake's head moves into a wall or its own body, the game enters the `STATE_GAMEOVER` state. The render callback draws a "GAME OVER" message with the final score. Pressing `KEY_OK` calls `my_applet_init()` (resets the entire game state) and resumes play. Pressing `KEY_RIGHT` calls `ui_back()` and returns to the main menu.
+
+### 18.6 Rendering
+
+Each frame:
+
+1. `ui_fb_clear()` — blank the framebuffer.
+2. HUD row: score left-aligned at (0, 0); speed indicator (e.g., `"SPD:3"`) right-aligned at (60, 0).
+3. Border: `ui_fb_hline(7, 0, 83)` (separator between HUD and game area).
+4. Food: single 4×4 filled cell at the food position.
+5. Snake body: each segment drawn as a 4×4 filled cell; the head segment is drawn inverted (`ui_fb_rect` then XOR) to distinguish it visually.
+6. Game-over overlay (if `STATE_GAMEOVER`): `ui_fb_text_inv` centred message.
+
+---
+
+## 19. LCD Viewer Tool (`tools/lcd_viewer.py`)
+
+### 19.1 Two-Window Design
+
+`lcd_viewer.py` opens **two separate matplotlib windows** that together form the Nokia 3310 simulator UI:
+
+| Window | Title | Contents | Sizing |
+|--------|-------|----------|--------|
+| Window 1 | `"Nokia 3310 — Screen"` | LCD display with dark bezel border | `(LCD_WIDTH×S + 2×BEZEL) × (LCD_HEIGHT×S + 2×BEZEL)` pixels |
+| Window 2 | `"Nokia 3310 — Keys"` | Nokia navigation buttons + T9 keypad | Width = `LCD_WIDTH × CS + 2×BEZEL` |
+
+Where:
+- `S` = `--scale` argument (default 4)
+- `BEZEL = max(6, S)` — dark border thickness in pixels
+- `CS = min(S, 5)` — capped scale for the controls window so it stays screen-friendly
+
+Both windows have a `resize_event` handler that snaps them back to their locked pixel size if the user attempts to resize. Keyboard events are captured from **either** window; focus does not need to be on Window 2 to use arrow keys or Enter.
+
+### 19.2 Window 1 — LCD Screen
+
+The LCD display is rendered as a matplotlib `imshow` image centred inside a dark bezel (`facecolor="#1a1a1a"`):
+
+```
+┌─────────────────────────────┐  ← dark bezel (#1a1a1a)
+│  ░░░░░░░░░░░░░░░░░░░░░░░░  │
+│  ░                        ░  │  BEZEL = max(6, S) pixels all sides
+│  ░  [84×48 LCD image]     ░  │
+│  ░                        ░  │
+│  ░░░░░░░░░░░░░░░░░░░░░░░░  │
+└─────────────────────────────┘
+  Total: (84×S + 2×BEZEL) × (48×S + 2×BEZEL) px
+```
+
+Pixel colours: `FG = [27, 47, 27]` (dark green, pixel ON), `BG = [155, 207, 155]` (light green, pixel OFF). The `animation.FuncAnimation` loop reads 504 bytes from `nokia_fb` via Renode Telnet at `--fps` rate (default 10 Hz).
+
+### 19.3 Window 2 — Keys
+
+Window 2 contains two matplotlib axes stacked vertically inside a dark panel (`facecolor="#1a1a1a"`):
+
+- **`ax_nav`** (upper): Nokia 3310 navigation button layout (§19.4)
+- **`ax_keys`** (lower): T9 numeric keypad (§19.5)
+
+All buttons flash green (`#5a9e5a`) for 150 ms on press, then return to their resting colour. Buttons are dimmed (`#262626`) and non-functional when the corresponding `--keys-address` / `--char-address` argument is not supplied.
+
+### 19.4 Navigation Button Layout
+
+The nav area (`ax_nav`, `xlim=[0,7]`, `ylim=[0,4]`) replicates the accurate Nokia 3310 (2000) hardware layout:
+
+```
+[ ◄  Back ]   [ ▲ ]   [ Menu  ► ]
+              [ ● ]
+              [ ▼ ]
+```
+
+| Button | Label | Key sent | Keyboard shortcut |
+|--------|-------|----------|-------------------|
+| Back (left softkey) | `◄  Back` | `KEY_LEFT` (`0x01`) | ← arrow |
+| Up | `▲` | `KEY_UP` (`0x04`) | ↑ arrow |
+| OK (centre) | `●` | `KEY_OK` (`0x10`) | Enter or Space |
+| Down | `▼` | `KEY_DOWN` (`0x08`) | ↓ arrow |
+| Menu (right softkey) | `Menu  ►` | `KEY_RIGHT` (`0x02`) | → arrow |
+
+`KEY_MAP` (module-level dict) maps keyboard event names to `KEY_*` bitmasks. `KEYBOARD_TO_NAV` maps the same keyboard names to button names for the visual flash. Mouse clicks within `ax_nav` hit-test against each button's bounding box and inject the corresponding key.
+
+Requires `--keys-address <nokia_keys_raw_address>`. Without it, buttons are rendered dimmed and clicks/keystrokes produce no Renode output.
+
+### 19.5 T9 Keypad
+
+The T9 area (`ax_keys`, `xlim=[0,3]`, `ylim=[0,4]`) contains a 3×4 grid matching the standard Nokia keypad layout:
+
+```
+[ 1 .,!? ]  [ 2 ABC ]  [ 3 DEF  ]
+[ 4 GHI  ]  [ 5 JKL ]  [ 6 MNO  ]
+[ 7 PQRS ]  [ 8 TUV ]  [ 9 WXYZ ]
+[   *    ]  [ 0 +   ]  [   #    ]
+```
+
+Mouse clicks inject the corresponding ASCII digit or symbol into `nokia_char_raw` via `sysbus WriteByte`. Host keyboard digit keys (`0`–`9`), `*`, and `#` also inject the character and flash the corresponding button. Requires `--char-address <nokia_char_raw_address>`.
+
+### 19.6 Command-Line Arguments
+
+| Argument | Required | Description |
+|----------|----------|-------------|
+| `--address ADDR` | **Yes** | RAM address of `nokia_fb` (hex or decimal) |
+| `--keys-address ADDR` | No | RAM address of `nokia_keys_raw`; enables nav buttons |
+| `--char-address ADDR` | No | RAM address of `nokia_char_raw`; enables T9 keypad |
+| `--host HOST` | No | Renode Telnet host (default `127.0.0.1`) |
+| `--port PORT` | No | Renode Telnet port (default `1234`) |
+| `--scale N` | No | LCD pixel scale factor (default `4`) |
+| `--fps N` | No | Frame refresh rate in Hz (default `10`) |
+
+---
+
+## 20. Messages Applet (`applet_messages.c`)
+
+### 20.1 Overview
+
+`SCR_MESSAGES` is registered as `APPLET_SCREEN("Messages", &messages_applet)` in `screens.c`. The applet source is `firmware/app/src/applet_messages.c` (~280 lines) with a companion header `applet_messages.h`. It implements a minimal SMS inbox with T9 multi-tap text composition.
+
+### 20.2 States
+
+The applet has four states (`msg_state_t`):
+
+| State | Description |
+|-------|-------------|
+| `MS_INBOX` | Scrollable list of 3 pre-filled messages |
+| `MS_VIEW` | Full-screen reader for the selected message |
+| `MS_COMPOSE` | T9 multi-tap text entry |
+| `MS_SENT` | "Message sent!" confirmation banner |
+
+State transitions:
+
+```
+           OK / KEY_LEFT                any key
+[MS_INBOX] ──────────────► [MS_VIEW] ──────────► [MS_INBOX]
+     │
+     │ KEY_LEFT ("NEW")
+     ▼
+[MS_COMPOSE] ──── KEY_RIGHT ("SEND") ────► [MS_SENT]
+                                               │
+                                    auto (15 ticks) or any key
+                                               │
+                                               ▼
+                                           [MS_INBOX]
+```
+
+### 20.3 Screen Layouts
+
+All four states use the common layout zones from §4, managed by the applet directly:
+
+| Zone | Rows | Content |
+|------|------|---------|
+| Title | y=1 | Centred title; `ui_fb_hline` at y=9 |
+| Content | y=12–38 | 3 rows × 9 px/row (`CONTENT_ROW_H`) |
+| Softkeys | y=39–47 | Separator at y=39, labels at y=41 |
+
+**MS_INBOX:**
+
+```
+┌────────────────────────┐
+│       Messages         │  title (centred)
+├────────────────────────┤  hline y=9
+│▌Alice: Coming tonight?▐│  ← selected row (inverted highlight)
+│ Bob: Check the news    │
+│ Mom: Call me pls       │
+├────────────────────────┤  hline y=39
+│ NEW               BACK │  softkeys
+└────────────────────────┘
+```
+
+Selected row is drawn with `ui_fb_rect` (filled bar) + `ui_fb_text_inv` (white text). UP/DOWN move the cursor (clamped). OK → `MS_VIEW`. LEFT SK (`KEY_LEFT`) → `MS_COMPOSE`. RIGHT SK (`KEY_RIGHT`) → `ui_back()`.
+
+**MS_VIEW:**
+
+```
+┌────────────────────────┐
+│         Alice          │  sender name as title
+├────────────────────────┤
+│ Coming tonight?        │  message text (wrapped at 14 chars/line)
+│                        │
+│                        │
+├────────────────────────┤
+│                   BACK │
+└────────────────────────┘
+```
+
+Any nav key returns to `MS_INBOX`.
+
+**MS_COMPOSE:**
+
+```
+┌────────────────────────┐
+│   Write Msg [A]        │  title; [A]=uppercase mode, [a]=lowercase
+├────────────────────────┤
+│ Hello█                 │  pending T9 char shown inverted (█)
+│                        │  blinking underscore when no pending char
+│                        │
+├────────────────────────┤
+│ DEL               SEND │
+└────────────────────────┘
+```
+
+Digit/symbol keys via `nokia_char_raw` → T9 multi-tap. See §20.5 for T9 details.
+
+**MS_SENT:**
+
+```
+┌────────────────────────┐
+│       Messages         │
+│                        │
+│  ██ Message sent! ███  │  inverted centred banner
+│                        │
+├────────────────────────┤
+│                    OK  │
+└────────────────────────┘
+```
+
+Auto-dismisses after 15 ticks (~1.5 s). Any nav key also dismisses to `MS_INBOX`.
+
+### 20.4 Pre-Filled Inbox Messages
+
+| Index | Sender | Text |
+|-------|--------|------|
+| 0 | Alice | `"Coming tonight?"` |
+| 1 | Bob | `"Check the news"` |
+| 2 | Mom | `"Call me pls"` |
+
+Defined as `static const` arrays in `applet_messages.c`; the inbox always shows exactly these three entries (`INBOX_COUNT = 3`).
+
+### 20.5 T9 Multi-Tap System
+
+#### Character Map
+
+| Key | Characters (tap 1, 2, 3, …) |
+|-----|------------------------------|
+| `0` | ` ` (space), `0` |
+| `1` | `.`, `,`, `!`, `?` |
+| `2` | `a`, `b`, `c` |
+| `3` | `d`, `e`, `f` |
+| `4` | `g`, `h`, `i` |
+| `5` | `j`, `k`, `l` |
+| `6` | `m`, `n`, `o` |
+| `7` | `p`, `q`, `r`, `s` |
+| `8` | `t`, `u`, `v` |
+| `9` | `w`, `x`, `y`, `z` |
+| `*` | Toggle uppercase/lowercase (commits pending char first) |
+| `#` | Insert space (commits pending char first) |
+
+In uppercase mode (`t9_upper = true`, default on `compose_reset()`) alphabetic characters are shifted: `a` → `A`, etc. The title bar shows `[A]` for uppercase and `[a]` for lowercase.
+
+#### Input Flow
+
+1. `lcd_viewer.py` writes the digit/symbol ASCII code to `nokia_char_raw` via `sysbus WriteByte`.
+2. `msg_tick()` reads `nokia_char_raw`, clears it to 0, and calls `t9_handle(ch)`.
+3. If `ch` is the **same digit** as the current pending key: advance `t9_tap` (wraps at character-set length), reset `t9_timer` to 0.
+4. If `ch` is a **different digit**: commit the current pending char (appended to `compose_buf`), start fresh with the new key.
+5. `*` / `#` are handled immediately (commit-then-toggle-case / commit-then-insert-space).
+6. After `T9_TIMEOUT` ticks (8 ticks ≈ 800 ms) without a new tap on the same key, the pending char is auto-committed by `msg_tick()`.
+
+#### T9 State Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `t9_key` | `int8_t` | Active key index (0–9); −1 = no pending char |
+| `t9_tap` | `uint8_t` | Tap count (indexes into T9_CHARS string) |
+| `t9_timer` | `uint8_t` | Ticks elapsed since last tap on this key |
+| `t9_upper` | `bool` | Uppercase mode (default `true` on `compose_reset()`) |
+
+#### Cursor and Blinking
+
+- When `t9_key >= 0`: the pending character is displayed inverted in a 6×`CONTENT_ROW_H` cell at the cursor position.
+- When `t9_key < 0`: a blinking 4 px-wide underscore is drawn at the cursor position; toggles every 4 ticks (`blink_ticks >> 2 & 1`).
+
+### 20.6 Compose Buffer
+
+| Property | Value |
+|----------|-------|
+| Maximum length | 64 characters (`MSG_MAX_LEN`) |
+| Characters per line | 14 (`CHARS_PER_LINE` = 6 px/char × 14 = 84 px) |
+| Visible lines | 3 (rows in the content zone) |
+| Scroll | Always shows the 3 lines containing/preceding the cursor line: `start_line = max(0, cursor_line - 2)` |
+
+### 20.7 Key Bindings Summary
+
+| State | Key | Action |
+|-------|-----|--------|
+| `MS_INBOX` | `KEY_UP` | Scroll cursor up (clamp 0) |
+| `MS_INBOX` | `KEY_DOWN` | Scroll cursor down (clamp `INBOX_COUNT-1`) |
+| `MS_INBOX` | `KEY_OK` | View selected message → `MS_VIEW` |
+| `MS_INBOX` | `KEY_LEFT` | New message → `MS_COMPOSE` |
+| `MS_INBOX` | `KEY_RIGHT` | Exit applet (`ui_back()`) |
+| `MS_VIEW` | any | Return to `MS_INBOX` |
+| `MS_COMPOSE` | digit / `*` / `#` | T9 input via `nokia_char_raw` |
+| `MS_COMPOSE` | `KEY_OK` | Commit pending T9 char immediately |
+| `MS_COMPOSE` | `KEY_LEFT` | DEL: cancel pending char, or delete last committed char, or exit to inbox if buffer empty |
+| `MS_COMPOSE` | `KEY_RIGHT` | SEND — commit pending char, transition to `MS_SENT` |
+| `MS_SENT` | any | Dismiss → `MS_INBOX` |
+

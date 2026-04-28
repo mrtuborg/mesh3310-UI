@@ -76,6 +76,24 @@ typedef enum {
 } nokia_key_t;
 
 /* ------------------------------------------------------------------ */
+/* Applet interface                                                     */
+/*                                                                      */
+/* An applet is a self-contained interactive mode (e.g. a game) that   */
+/* takes over rendering and key handling while it is on the nav stack.  */
+/* Register one by using SCREEN_APPLET in a screen_def_t.               */
+/* ------------------------------------------------------------------ */
+typedef struct {
+    /** Called once when the applet screen is pushed onto the nav stack. */
+    void (*init)(void);
+    /** Called every ui_tick().  Update game state here (do not draw). */
+    void (*tick)(void);
+    /** Called every ui_tick() after tick().  Draw to nokia_fb here.   */
+    void (*render)(void);
+    /** Called when any key is pressed.  Call ui_back() to exit.       */
+    void (*on_key)(nokia_key_t key);
+} applet_t;
+
+/* ------------------------------------------------------------------ */
 /* Actions                                                              */
 /* ------------------------------------------------------------------ */
 typedef enum {
@@ -141,8 +159,9 @@ typedef struct {
 /* Screen descriptor                                                    */
 /* ------------------------------------------------------------------ */
 typedef enum {
-    SCREEN_STATIC,  /* static content; all keys routed via on_* fields  */
-    SCREEN_MENU,    /* scrollable list; UP/DOWN/OK handled automatically */
+    SCREEN_STATIC,   /* static content; all keys routed via on_* fields  */
+    SCREEN_MENU,     /* scrollable list; UP/DOWN/OK handled automatically */
+    SCREEN_APPLET,   /* game / interactive mode; delegates to applet_t    */
 } screen_type_t;
 
 #define SCREEN_STACK_DEPTH 8
@@ -164,13 +183,22 @@ typedef struct {
      * SCREEN_MENU   : UP/DOWN/OK select items automatically;
      *                 LEFT executes the highlighted item (= OK);
      *                 RIGHT is routed to on_right (usually BACK()).
+     * SCREEN_APPLET : ignored — all keys go to applet->on_key().
      */
     action_t             on_left;
     action_t             on_right;
     action_t             on_up;
     action_t             on_down;
     action_t             on_ok;
+
+    /* SCREEN_APPLET only — pointer to the applet implementation */
+    const applet_t      *applet;
 } screen_def_t;
+
+/* Convenience macro for declaring an applet screen in g_screens[].    */
+/* All unspecified fields (widgets, items, actions) are zero-inited.   */
+#define APPLET_SCREEN(n, app_ptr) \
+    { .name = (n), .type = SCREEN_APPLET, .applet = (app_ptr) }
 
 /* ------------------------------------------------------------------ */
 /* Engine API                                                           */
@@ -208,3 +236,32 @@ int ui_current_menu_cursor(void);
 
 /** Return the menu scroll offset in the current SCREEN_MENU. */
 int ui_current_menu_scroll(void);
+
+/* ------------------------------------------------------------------ */
+/* Navigation helper — for use by applets                              */
+/* ------------------------------------------------------------------ */
+
+/** Pop the current screen off the nav stack (return to previous screen). */
+void ui_back(void);
+
+/* ------------------------------------------------------------------ */
+/* Drawing primitives — for use by applets                             */
+/* ------------------------------------------------------------------ */
+
+/** Clear the entire framebuffer (all pixels off). */
+void ui_fb_clear(void);
+
+/** Set a single pixel at (x, y). Coordinates are clipped silently. */
+void ui_fb_pixel(int x, int y);
+
+/** Fill a w×h rectangle with its top-left corner at (x, y). */
+void ui_fb_rect(int x, int y, int w, int h);
+
+/** Draw a horizontal line from x0 to x1 (inclusive) at row y. */
+void ui_fb_hline(int y, int x0, int x1);
+
+/** Draw a null-terminated string with its top-left at (x, y). */
+void ui_fb_text(int x, int y, const char *s);
+
+/** Same as ui_fb_text but pixels are XOR-flipped (white-on-black). */
+void ui_fb_text_inv(int x, int y, const char *s);
