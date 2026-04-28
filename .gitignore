@@ -1,7 +1,9 @@
 # ---- Build output ----
 build/
+build_*/
 out/
 cmake-build-*/
+firmware/tests/_build/
 
 # ---- Zephyr / west workspace ----
 bootloader/
