@@ -1,0 +1,4 @@
+tests:
+  nokia.ui:
+    tags: nokia ui
+    platform_allow: native_sim
