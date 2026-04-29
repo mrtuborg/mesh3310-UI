@@ -77,9 +77,11 @@ jobs:
 
       - name: Run twister
         working-directory: Nokia3310-UI
+        shell: bash
         env:
           ZEPHYR_TOOLCHAIN_VARIANT: host
         run: |
+          source "$(west list zephyr -f '{path}')/zephyr-env.sh"
           west twister \
             -T firmware/tests \
             --platform native_sim \
