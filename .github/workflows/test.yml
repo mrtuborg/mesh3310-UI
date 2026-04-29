@@ -6,10 +6,6 @@ on:
   pull_request:
     branches: ["**"]
 
-# zephyrprojectrtos/ci:v0.26.14 ships Zephyr SDK 0.16.x, matching Zephyr 3.6.0.
-# ghcr.io/zephyrproject-rtos/zephyr-build:latest now ships SDK 1.0.1 which is
-# incompatible (Zephyr 3.6.0 cmake requires SDK major version 0).
-
 jobs:
   # ------------------------------------------------------------------ #
   # Job 1: host build — runs on every push, no Zephyr needed            #
@@ -30,7 +26,9 @@ jobs:
     name: Firmware build (nRF52, Zephyr 3.6.0)
     runs-on: ubuntu-latest
     container:
-      image: zephyrprojectrtos/ci:v0.26.14
+      # Pinned to v0.27.0-amd64 (SDK 0.17.0-rc1, matches Zephyr 3.6.0).
+      # CI runners are always amd64; same image as docker/Dockerfile.
+      image: ghcr.io/zephyrproject-rtos/zephyr-build:v0.27.0-amd64
       options: --user root
 
     steps:
@@ -59,7 +57,7 @@ jobs:
     name: Ztest (native_sim, Zephyr 3.6.0)
     runs-on: ubuntu-latest
     container:
-      image: zephyrprojectrtos/ci:v0.26.14
+      image: ghcr.io/zephyrproject-rtos/zephyr-build:v0.27.0-amd64
       options: --user root
 
     steps:

@@ -1,5 +1,8 @@
-# Pinned to the CI image that ships Zephyr SDK 0.16.x, matching west.yml (Zephyr 3.6.0).
-# Do not use :latest — it now ships SDK 1.0.1 which is incompatible with Zephyr 3.6.0.
-FROM zephyrprojectrtos/ci:v0.26.14
+# v0.27.0 ships Zephyr SDK 0.17.0-rc1, compatible with Zephyr 3.6.0.
+# No multi-arch manifest for v0.27.0 yet; CI uses -amd64.
+# On Apple Silicon Mac, replace -amd64 with -arm64 in your local build.
+ARG BASE=ghcr.io/zephyrproject-rtos/zephyr-build:v0.27.0-amd64
+FROM ${BASE}
+
 WORKDIR /work
 
