@@ -6,9 +6,9 @@ on:
   pull_request:
     branches: ["**"]
 
-# Image shared by both Zephyr jobs — same as docker/Dockerfile
-env:
-  ZEPHYR_BUILD_IMAGE: ghcr.io/zephyrproject-rtos/zephyr-build:latest
+# zephyrprojectrtos/ci:v0.26.14 ships Zephyr SDK 0.16.x, matching Zephyr 3.6.0.
+# ghcr.io/zephyrproject-rtos/zephyr-build:latest now ships SDK 1.0.1 which is
+# incompatible (Zephyr 3.6.0 cmake requires SDK major version 0).
 
 jobs:
   # ------------------------------------------------------------------ #
@@ -24,13 +24,13 @@ jobs:
         run: make -C firmware/tests clean test
 
   # ------------------------------------------------------------------ #
-  # Job 2: Firmware build for nRF52 — same image as local docker build  #
+  # Job 2: Firmware build for nRF52                                     #
   # ------------------------------------------------------------------ #
   firmware-build:
     name: Firmware build (nRF52, Zephyr 3.6.0)
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/zephyrproject-rtos/zephyr-build:latest
+      image: zephyrprojectrtos/ci:v0.26.14
       options: --user root
 
     steps:
@@ -44,12 +44,6 @@ jobs:
           git config --global --add safe.directory "$(pwd)"
           west init -l west-manifest
           west update --narrow -o=--depth=1
-
-      - name: Register Zephyr SDK with cmake
-        run: |
-          sdk=$(find /opt/toolchains -maxdepth 1 -name 'zephyr-sdk-*' -type d | head -1)
-          echo "Found SDK: $sdk"
-          "$sdk/setup.sh" -c
 
       - name: Build firmware
         working-directory: Nokia3310-UI
@@ -65,7 +59,7 @@ jobs:
     name: Ztest (native_sim, Zephyr 3.6.0)
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/zephyrproject-rtos/zephyr-build:latest
+      image: zephyrprojectrtos/ci:v0.26.14
       options: --user root
 
     steps:
