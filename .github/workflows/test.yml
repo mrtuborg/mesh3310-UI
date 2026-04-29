@@ -47,6 +47,7 @@ jobs:
 
       - name: Build firmware
         working-directory: Nokia3310-UI
+        shell: bash
         run: |
           source "$(west list zephyr -f '{path}')/zephyr-env.sh"
           west build -b nrf52dk_nrf52805 firmware/app -d build
@@ -75,6 +76,8 @@ jobs:
 
       - name: Run twister
         working-directory: Nokia3310-UI
+        env:
+          ZEPHYR_TOOLCHAIN_VARIANT: host
         run: |
           west twister \
             -T firmware/tests \
