@@ -14,7 +14,7 @@ jobs:
     name: Host tests (cc, no Zephyr)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Build and run
         run: make -C firmware/tests clean test
@@ -32,7 +32,7 @@ jobs:
       options: --user root
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           path: Nokia3310-UI
 
@@ -64,7 +64,7 @@ jobs:
       options: --user root
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           path: Nokia3310-UI
 
