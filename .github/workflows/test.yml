@@ -45,6 +45,12 @@ jobs:
           west init -l west-manifest
           west update --narrow -o=--depth=1
 
+      - name: Register Zephyr SDK with cmake
+        run: |
+          sdk=$(find /opt/toolchains -maxdepth 1 -name 'zephyr-sdk-*' -type d | head -1)
+          echo "Found SDK: $sdk"
+          "$sdk/setup.sh" -c
+
       - name: Build firmware
         working-directory: Nokia3310-UI
         shell: bash
