@@ -37,11 +37,14 @@
  *   LABEL_CENTER(y, "text")    — centred text at row y.
  *   MENU_LIST()                — renders the item list for SCREEN_MENU.
  *
- * SCREEN LAYOUT (84 × 48 pixels)
+ * SCREEN LAYOUT (proportional — reference is 84 × 48 pixels)
  * --------------------------------
- *   y =  0–13 : status bar area (STATUS_BAR + separator)
- *   y = 14–38 : content / menu items
- *   y = 39–47 : softkey bar (separator + labels)
+ *   y =  0 – UI_STATUS_SEP_Y  : status bar area (STATUS_BAR + separator)
+ *   y =  UI_CONTENT_Y – …     : content / menu items
+ *   y =  UI_SOFTKEY_SEP_Y – … : softkey bar (separator + labels)
+ *
+ * Use _UY(y48) / _UX(x84) to scale reference coordinates to the actual
+ * display size.  On the original 84×48 display _UY(y48) == y48.
  */
 
 #include <zephyr/kernel.h>
@@ -68,8 +71,8 @@ enum {
 /* ================================================================== */
 static const widget_t idle_widgets[] = {
     STATUS_BAR(),
-    LABEL_SCALED(15, 14, "12:34", 2),
-    LABEL_CENTER(31, "LORA"),
+    LABEL_CENTER_SCALED(_UY(14), "12:34", 2),
+    LABEL_CENTER(_UY(31), "LORA"),
     SOFTKEY_BAR("MENU", "NAMES"),
 };
 
@@ -84,8 +87,8 @@ static const menu_item_t main_menu_items[] = {
 };
 
 static const widget_t main_menu_widgets[] = {
-    LABEL_CENTER(1, "Menu"),
-    HLINE(9),
+    LABEL_CENTER(_UY(1), "Menu"),
+    HLINE(_UY(9)),
     MENU_LIST(),
     SOFTKEY_BAR("SELECT", "BACK"),
 };
@@ -94,9 +97,9 @@ static const widget_t main_menu_widgets[] = {
 /* Games screen                                                         */
 /* ================================================================== */
 static const widget_t games_widgets[] = {
-    LABEL_CENTER(1, "Games"),
-    HLINE(9),
-    LABEL_CENTER(22, "Snake"),
+    LABEL_CENTER(_UY(1), "Games"),
+    HLINE(_UY(9)),
+    LABEL_CENTER(_UY(22), "Snake"),
     SOFTKEY_BAR("PLAY", "BACK"),
 };
 
@@ -104,10 +107,10 @@ static const widget_t games_widgets[] = {
 /* Profiles screen                                                      */
 /* ================================================================== */
 static const widget_t profiles_widgets[] = {
-    LABEL_CENTER(1, "Profiles"),
-    HLINE(9),
-    LABEL_CENTER(18, "General"),
-    LABEL_CENTER(27, "Silent"),
+    LABEL_CENTER(_UY(1), "Profiles"),
+    HLINE(_UY(9)),
+    LABEL_CENTER(_UY(18), "General"),
+    LABEL_CENTER(_UY(27), "Silent"),
     SOFTKEY_BAR("SELECT", "BACK"),
 };
 
@@ -115,9 +118,9 @@ static const widget_t profiles_widgets[] = {
 /* Settings screen                                                      */
 /* ================================================================== */
 static const widget_t settings_widgets[] = {
-    LABEL_CENTER(1, "Settings"),
-    HLINE(9),
-    LABEL_CENTER(22, "Coming soon"),
+    LABEL_CENTER(_UY(1), "Settings"),
+    HLINE(_UY(9)),
+    LABEL_CENTER(_UY(22), "Coming soon"),
     SOFTKEY_BAR("", "BACK"),
 };
 

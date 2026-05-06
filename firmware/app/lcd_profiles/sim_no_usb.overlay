@@ -1,0 +1,11 @@
+/*
+ * DTS overlay for simulator builds — disables the USBD hardware node.
+ *
+ * Without this, the nRF52840 USB driver starts and polls USBD:EVENTCAUSE
+ * in a tight loop waiting for a VBUS connection that Renode never provides.
+ * Disabling the node clears DT_HAS_NORDIC_NRF_USBD_ENABLED, which prevents
+ * the USB_NRFX driver from being compiled in regardless of Kconfig settings.
+ */
+&usbd {
+	status = "disabled";
+};

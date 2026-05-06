@@ -1,0 +1,86 @@
+mainmenu "Nokia UI Application"
+
+source "Kconfig.zephyr"
+
+menu "LCD Profile"
+
+config NOKIA_LCD_WIDTH
+	int "LCD width in pixels"
+	default 84
+	help
+	  Framebuffer width matching the physical display.
+	  Override per-display via an overlay .conf, e.g.:
+	    west build -- -DOVERLAY_CONFIG=firmware/app/lcd_profiles/sh1107_128.conf
+
+config NOKIA_LCD_HEIGHT
+	int "LCD height in pixels"
+	default 48
+	help
+	  Framebuffer height matching the physical display.
+
+endmenu
+
+menu "Backend"
+
+choice NOKIA_BACKEND
+	prompt "Display backend"
+	default NOKIA_BACKEND_SIM
+
+config NOKIA_BACKEND_SIM
+	bool "Simulation (Renode)"
+	help
+	  nokia_fb lives in RAM; the Renode/Python simulator reads it directly.
+	  No I2C driver is compiled in.  Use this for all simulator builds.
+
+config NOKIA_BACKEND_SH1107_I2C
+	bool "SH1107 over I2C (real hardware)"
+	select I2C
+	help
+	  Initialises the SH1107 display over I2C and flushes nokia_fb to it
+	  every ui_tick().  Targets the GME128128-01-IIC (v2.0) and compatible
+	  128x128 SH1107 modules.
+
+endchoice
+
+config NOKIA_SH1107_I2C_ADDR
+	hex "SH1107 I2C address"
+	default 0x3C
+	depends on NOKIA_BACKEND_SH1107_I2C
+	help
+	  7-bit I2C address of the display. Most boards use 0x3C; some use 0x3D.
+
+config NOKIA_DISPLAY_ROTATION
+	int "Display rotation (degrees)"
+	default 0
+	range 0 270
+	depends on NOKIA_BACKEND_SH1107_I2C
+	help
+	  Rotate the framebuffer before sending to the display.
+	  Valid values: 0, 90, 180, 270 (clockwise).
+
+config NOKIA_DISPLAY_VFLIP
+	bool "Flip display vertically"
+	default n
+	depends on NOKIA_BACKEND_SH1107_I2C
+	help
+	  Invert the vertical axis after rotation.  Enable this when the
+	  display shows the correct landscape orientation but top and bottom
+	  are swapped (e.g. status bar appears at bottom instead of top).
+
+config NOKIA_SH1107_SEG_REMAP
+	bool "SH1107 segment remap (0xA1)"
+	default n
+	depends on NOKIA_BACKEND_SH1107_I2C
+	help
+	  Enable reversed segment addressing (0xA1 instead of 0xA0).
+	  Use when the display panel is wired with SEG reversed.
+
+config NOKIA_SH1107_COM_REMAP
+	bool "SH1107 COM output remap (0xC8)"
+	default n
+	depends on NOKIA_BACKEND_SH1107_I2C
+	help
+	  Enable reversed COM output scan direction (0xC8 instead of 0xC0).
+	  Use when the display panel is wired with COM scan reversed.
+
+endmenu

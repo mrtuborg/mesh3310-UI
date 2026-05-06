@@ -8,9 +8,6 @@
 #define LCD_HEIGHT  NOKIA_LCD_HEIGHT
 #define LCD_PAGES   NOKIA_LCD_PAGES
 
-#define MENU_VISIBLE_ITEMS  3
-#define MENU_ITEM_H         9           /* pixels per menu row         */
-
 /* ------------------------------------------------------------------ */
 /* 5×7 bitmap font, ASCII 0x20 – 0x7E (95 glyphs)                      */
 /* Each byte is one column; bit 0 = top row, bit 6 = bottom row.       */
@@ -176,7 +173,7 @@ static void fb_draw_glyph(int x, int y, const uint8_t *glyph, int xor_mode)
     }
 }
 
-static void fb_draw_glyph_scaled(int x, int y, const uint8_t *glyph, int scale)
+static void fb_draw_glyph_scaled(int x, int y, const uint8_t *glyph, int scale, int xor_mode)
 {
     for (int col = 0; col < 5; col++) {
         uint8_t bits = glyph[col];
@@ -184,7 +181,14 @@ static void fb_draw_glyph_scaled(int x, int y, const uint8_t *glyph, int scale)
             if (!(bits & (1u << row))) continue;
             for (int sx = 0; sx < scale; sx++) {
                 for (int sy = 0; sy < scale; sy++) {
-                    fb_set_pixel(x + col * scale + sx, y + row * scale + sy);
+                    int px = x + col * scale + sx;
+                    int py = y + row * scale + sy;
+                    if (px < 0 || px >= LCD_WIDTH || py < 0 || py >= LCD_HEIGHT) continue;
+                    if (xor_mode) {
+                        nokia_fb[py / 8][px] ^= (uint8_t)(1u << (py % 8));
+                    } else {
+                        nokia_fb[py / 8][px] |= (uint8_t)(1u << (py % 8));
+                    }
                 }
             }
         }
@@ -198,20 +202,21 @@ static void fb_draw_string(int x, int y, const char *s, int xor_mode)
     }
 }
 
-static void fb_draw_string_centered(int y, const char *s)
-{
-    int len = (int)strlen(s);
-    if (len > LCD_WIDTH / 6) len = LCD_WIDTH / 6;   /* guard against overflow */
-    int x   = (LCD_WIDTH - len * 6) / 2;
-    if (x < 0) x = 0;
-    fb_draw_string(x, y, s, 0);
-}
-
-static void fb_draw_string_scaled(int x, int y, const char *s, int scale)
+static void fb_draw_string_scaled(int x, int y, const char *s, int scale, int xor_mode)
 {
     for (int i = 0; s[i]; i++) {
-        fb_draw_glyph_scaled(x + i * 6 * scale, y, font_get(s[i]), scale);
+        fb_draw_glyph_scaled(x + i * 6 * scale, y, font_get(s[i]), scale, xor_mode);
     }
+}
+
+static void fb_draw_string_centered_scaled(int y, const char *s, int scale)
+{
+    int len = (int)strlen(s);
+    int gw  = 6 * scale;
+    if (len * gw > LCD_WIDTH) len = LCD_WIDTH / gw;
+    int x = (LCD_WIDTH - len * gw) / 2;
+    if (x < 0) x = 0;
+    fb_draw_string_scaled(x, y, s, scale, 0);
 }
 
 /* ------------------------------------------------------------------ */
@@ -249,38 +254,39 @@ void ui_set_battery(int level)
 
 static void render_status_bar(void)
 {
+    int S = UI_FONT_SCALE;
+
     /* Signal bars — five bars, bottom-aligned on the left side */
     for (int i = 0; i < 5; i++) {
-        int h       = 2 + i * 2;
-        int bar_bot = 11;
+        int h       = (2 + i * 2) * S;
+        int bar_bot = 11 * S;
+        int bar_x   = (2 + i * 3) * S;
         if (i < g_signal) {
             for (int y = 0; y < h; y++) {
-                fb_set_pixel(2 + i * 3, bar_bot - y);
+                fb_set_pixel(bar_x, bar_bot - y);
             }
         } else {
             /* hollow: just the top and bottom pixel of each bar */
-            fb_set_pixel(2 + i * 3, bar_bot);
-            fb_set_pixel(2 + i * 3, bar_bot - h + 1);
+            fb_set_pixel(bar_x, bar_bot);
+            fb_set_pixel(bar_x, bar_bot - h + 1);
         }
     }
 
     /* Battery icon — right side */
     {
-        int bx = LCD_WIDTH - 13;
-        int by = 2;
-        /* outline: 10 wide × 7 tall */
-        for (int i = 0; i < 10; i++) { fb_set_pixel(bx + i, by);     }
-        for (int i = 0; i < 10; i++) { fb_set_pixel(bx + i, by + 6); }
-        for (int i = 0; i <= 6;  i++) { fb_set_pixel(bx,     by + i); }
-        for (int i = 0; i <= 6;  i++) { fb_set_pixel(bx + 9, by + i); }
+        int bx = LCD_WIDTH - 13 * S;
+        int by = 2 * S;
+        /* outline: (10*S) wide × (6*S+1) tall */
+        for (int i = 0; i < 10 * S; i++) { fb_set_pixel(bx + i, by);         }
+        for (int i = 0; i < 10 * S; i++) { fb_set_pixel(bx + i, by + 6 * S); }
+        for (int i = 0; i <= 6 * S; i++) { fb_set_pixel(bx,           by + i); }
+        for (int i = 0; i <= 6 * S; i++) { fb_set_pixel(bx + 9 * S - 1, by + i); }
         /* terminal nub */
-        fb_set_pixel(bx + 10, by + 2);
-        fb_set_pixel(bx + 10, by + 3);
-        fb_set_pixel(bx + 10, by + 4);
+        for (int i = 2 * S; i <= 4 * S; i++) { fb_set_pixel(bx + 9 * S, by + i); }
         /* fill proportional to battery level */
         static const int fill_w[4] = {0, 2, 5, 8};
-        int fw = fill_w[g_battery < 4 ? g_battery : 3];
-        for (int fy = by + 1; fy <= by + 5; fy++) {
+        int fw = fill_w[g_battery < 4 ? g_battery : 3] * S;
+        for (int fy = by + 1; fy <= by + 5 * S; fy++) {
             for (int fx = bx + 1; fx < bx + 1 + fw; fx++) {
                 fb_set_pixel(fx, fy);
             }
@@ -288,17 +294,17 @@ static void render_status_bar(void)
     }
 
     /* Separator line below status bar */
-    fb_hline(13);
+    fb_hline(UI_STATUS_SEP_Y);
 }
 
 static void render_softkey_bar(const char *left, const char *right)
 {
-    fb_hline(39);
-    if (left  && *left)  fb_draw_string(1, 41, left, 0);
+    fb_hline(UI_SOFTKEY_SEP_Y);
+    if (left  && *left)  fb_draw_string_scaled(1, UI_SOFTKEY_TEXT_Y, left, UI_FONT_SCALE, 0);
     if (right && *right) {
-        int x = LCD_WIDTH - (int)strlen(right) * 6 - 1;
+        int x = LCD_WIDTH - (int)strlen(right) * UI_CHAR_W - 1;
         if (x < 0) x = 0;
-        fb_draw_string(x, 41, right, 0);
+        fb_draw_string_scaled(x, UI_SOFTKEY_TEXT_Y, right, UI_FONT_SCALE, 0);
     }
 }
 
@@ -307,20 +313,20 @@ static void render_menu_list(const widget_t *w, const screen_def_t *scr,
 {
     if (!scr->items || scr->item_count == 0) return;
 
-    int visible = scr->item_count < MENU_VISIBLE_ITEMS
-                  ? scr->item_count : MENU_VISIBLE_ITEMS;
+    int visible = scr->item_count < UI_MENU_VISIBLE
+                  ? scr->item_count : UI_MENU_VISIBLE;
 
     for (int i = 0; i < visible; i++) {
         int idx    = scroll + i;
         if (idx >= scr->item_count) break;
-        int item_y = w->y + i * MENU_ITEM_H;
+        int item_y = w->y + i * UI_MENU_ITEM_H;
 
         if (idx == cursor) {
             /* Highlight: black background, white text via XOR */
-            fb_fill_rect(0, item_y - 1, LCD_WIDTH, MENU_ITEM_H);
-            fb_draw_string(w->x, item_y, scr->items[idx].label, 1);
+            fb_fill_rect(0, item_y - 1, LCD_WIDTH, UI_MENU_ITEM_H);
+            fb_draw_string_scaled(w->x, item_y, scr->items[idx].label, UI_FONT_SCALE, 1);
         } else {
-            fb_draw_string(w->x, item_y, scr->items[idx].label, 0);
+            fb_draw_string_scaled(w->x, item_y, scr->items[idx].label, UI_FONT_SCALE, 0);
         }
     }
 
@@ -335,9 +341,9 @@ static void render_menu_list(const widget_t *w, const screen_def_t *scr,
     }
 
     /* Scroll-down arrow */
-    if (scroll + MENU_VISIBLE_ITEMS < scr->item_count) {
+    if (scroll + UI_MENU_VISIBLE < scr->item_count) {
         int ax = LCD_WIDTH - 5;
-        int ay = w->y + visible * MENU_ITEM_H - 4;
+        int ay = w->y + visible * UI_MENU_ITEM_H - 4;
         fb_set_pixel(ax + 1, ay + 2);
         fb_set_pixel(ax,     ay);
         fb_set_pixel(ax + 1, ay + 1);
@@ -425,8 +431,8 @@ void ui_inject_key(nokia_key_t key)
         case KEY_DOWN:
             if (nav->cursor < scr->item_count - 1) {
                 nav->cursor++;
-                if (nav->cursor >= nav->scroll + MENU_VISIBLE_ITEMS) {
-                    nav->scroll = nav->cursor - MENU_VISIBLE_ITEMS + 1;
+                if (nav->cursor >= nav->scroll + UI_MENU_VISIBLE) {
+                    nav->scroll = nav->cursor - UI_MENU_VISIBLE + 1;
                 }
             }
             return;
@@ -474,14 +480,10 @@ static void render_screen(void)
             render_softkey_bar(w->text, w->text2);
             break;
         case WID_LABEL:
-            if (w->scale > 1) {
-                fb_draw_string_scaled(w->x, w->y, w->text, w->scale);
-            } else {
-                fb_draw_string(w->x, w->y, w->text, 0);
-            }
+            fb_draw_string_scaled(w->x, w->y, w->text, w->scale * UI_FONT_SCALE, 0);
             break;
         case WID_LABEL_CENTERED:
-            fb_draw_string_centered(w->y, w->text);
+            fb_draw_string_centered_scaled(w->y, w->text, w->scale * UI_FONT_SCALE);
             break;
         case WID_HLINE:
             fb_hline(w->y);

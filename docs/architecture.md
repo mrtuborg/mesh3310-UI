@@ -216,3 +216,66 @@ T9 state is kept entirely in firmware (`applet_messages.c`). `nokia_char_raw` ca
 - **Negative:** `lcd_viewer.py` sends a raw digit on every physical key event. If the user holds down a key on the host keyboard and the OS auto-repeats, multiple events arrive, each advancing `t9_tap`. This is intentional (Nokia hardware worked the same way — repeated physical presses cycle through characters) but may surprise users expecting hold-to-type behaviour.
 - **Negative:** The T9 character map is duplicated: `KEYPAD_LAYOUT` in `lcd_viewer.py` (for display only) and `T9_CHARS` in `applet_messages.c` (for decode). A change to the character set must be made in both places.
 
+
+---
+
+## ADR-009: Three-Layer Display Architecture
+
+**Status:** Accepted
+
+### Context
+
+The original `display_hw.c` mixed rotation transforms, I2C protocol, LED diagnostics, and bus scanning in a single 200+ line file. This made it hard to:
+
+- Change rotation without touching I2C code
+- Test transforms independently of hardware
+- Add new display controllers (e.g., SSD1306) without duplicating rotation logic
+
+### Decision
+
+The display subsystem is split into three layers with strict responsibilities:
+
+| Layer | File | Responsibility |
+|-------|------|---------------|
+| **Transform** | `display_transform.h/c` | Pure rotation/flip of `nokia_fb` into per-page buffers. No hardware deps, no Zephyr headers. |
+| **Protocol** | `display_sh1107.h/c` | SH1107-specific I2C commands: probe, init sequence, page writes. No rotation knowledge. |
+| **Orchestration** | `display.h/c` | Glues transform → protocol. Owns LED diagnostics, error handling, heartbeat blink. |
+
+For simulator builds (`CONFIG_NOKIA_BACKEND_SIM`), `display.h` provides no-op `static inline` stubs — no display code is compiled.
+
+### Consequences
+
+- **Positive:** Adding a new display controller (e.g., SSD1306) requires only a new protocol file; the transform and orchestration layers are reusable.
+- **Positive:** `display_transform.c` is pure C with no Zephyr dependencies; it can be unit-tested on the host.
+- **Positive:** Rotation is fully decoupled from hardware wiring (`SEG_REMAP`/`COM_REMAP` are Kconfig booleans handled in the protocol layer).
+- **Negative:** Three files instead of one; slightly more indirection for a simple project. Accepted trade-off for maintainability.
+
+---
+
+## ADR-010: Simulator USB Disable via DTS Overlay
+
+**Status:** Accepted
+
+### Context
+
+The `xiao_ble` board defconfig enables `CONFIG_USB_DEVICE_STACK=y` and routes the UART console through USB CDC. Renode does not implement the nRF52840 USBD peripheral (`USBD:EVENTCAUSE` at `0x40027400`). The USB driver polls this register indefinitely waiting for the READY bit, starving the main thread and preventing the UI from running.
+
+Kconfig overlays (`CONFIG_USB_DEVICE_STACK=n`) alone cannot reliably override the board defconfig for this symbol due to Zephyr's config merge rules and the `USB_NRFX` driver's dependency on `DT_HAS_NORDIC_NRF_USBD_ENABLED`.
+
+### Decision
+
+Simulator builds apply a DTS overlay (`lcd_profiles/sim_no_usb.overlay`) containing:
+```dts
+&usbd { status = "disabled"; };
+```
+
+This removes `DT_HAS_NORDIC_NRF_USBD_ENABLED` from the generated devicetree header, making `USB_NRFX` unavailable at Kconfig time. Combined with the Kconfig overlay `CONFIG_USB_DEVICE_STACK=n`, all USB code is excluded from the build.
+
+`docker/build.sh` automatically applies this overlay for all non-`hw_` profiles and manages build directory cleanup when switching between hw and sim builds.
+
+### Consequences
+
+- **Positive:** Simulator firmware boots instantly and populates `nokia_fb` within the first tick.
+- **Positive:** Hardware builds retain full USB CDC console for serial diagnostics.
+- **Positive:** The fix is non-invasive — no Zephyr source patches, no custom board definition.
+- **Negative:** Switching between hw and sim builds requires a clean rebuild (automated by `build.sh`).

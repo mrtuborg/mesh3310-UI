@@ -2,10 +2,13 @@
 # run-sim.sh — Build (optional), start Renode, and launch the LCD viewer.
 #
 # Usage:
-#   ./run-sim.sh            # use existing build/zephyr/zephyr.elf
-#   ./run-sim.sh --build    # rebuild firmware via Docker, then exit
-#   ./run-sim.sh --scale 5  # override LCD zoom (default: 8)
-#   ./run-sim.sh --fps 15   # override refresh rate (default: 10)
+#   ./run-sim.sh                              # use existing build/zephyr/zephyr.elf
+#   ./run-sim.sh --build                      # rebuild firmware via Docker, then exit
+#   ./run-sim.sh --scale 5                    # override LCD zoom (default: 8)
+#   ./run-sim.sh --fps 15                     # override refresh rate (default: 10)
+#   ./run-sim.sh --lcd sh1107_128             # SH1107 128×128 cyan display
+#   ./run-sim.sh --keypad 4x4_mcp23008       # 4×4 matrix keypad (MCP23008)
+#   ./run-sim.sh --list-profiles              # show all LCD / keypad profiles
 set -e
 cd "$(dirname "$0")"   # always run from project root
 
@@ -13,20 +16,26 @@ cd "$(dirname "$0")"   # always run from project root
 # Defaults                                                            #
 # ------------------------------------------------------------------ #
 BUILD=0
-SCALE=8
+SCALE=0
 FPS=10
 RENODE_PORT=1234
 ELF="build/zephyr/zephyr.elf"
+LCD_PROFILE="nokia3310"
+KEYPAD_PROFILE="nokia"
+LIST_PROFILES=0
 
 # ------------------------------------------------------------------ #
 # Argument parsing                                                    #
 # ------------------------------------------------------------------ #
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --build)  BUILD=1 ;;
-        --scale)  SCALE="$2";  shift ;;
-        --fps)    FPS="$2";    shift ;;
-        --port)   RENODE_PORT="$2"; shift ;;
+        --build)         BUILD=1 ;;
+        --scale)         SCALE="$2";          shift ;;
+        --fps)           FPS="$2";            shift ;;
+        --port)          RENODE_PORT="$2";    shift ;;
+        --lcd)           LCD_PROFILE="$2";    shift ;;
+        --keypad)        KEYPAD_PROFILE="$2"; shift ;;
+        --list-profiles) LIST_PROFILES=1 ;;
         *) echo "Unknown option: $1"; exit 1 ;;
     esac
     shift
@@ -36,9 +45,15 @@ done
 # Step 1 — optional firmware build                                    #
 # ------------------------------------------------------------------ #
 if [[ "$BUILD" == "1" ]]; then
-    echo "==> Building firmware (Docker)..."
-    ./docker/build.sh
+    echo "==> Building firmware (Docker, LCD=${LCD_PROFILE})..."
+    ./docker/build.sh "$LCD_PROFILE"
     echo "==> Build complete: $ELF"
+    exit 0
+fi
+
+# --list-profiles delegates directly to the viewer (no ELF needed)
+if [[ "$LIST_PROFILES" == "1" ]]; then
+    python3 tools/lcd_viewer.py --list-profiles
     exit 0
 fi
 
@@ -48,17 +63,25 @@ if [[ ! -f "$ELF" ]]; then
 fi
 
 # ------------------------------------------------------------------ #
-# Step 2 — extract symbol addresses from ELF                         #
+# Step 2 — extract symbol addresses and sizes from ELF               #
 # ------------------------------------------------------------------ #
 echo "==> Reading symbol addresses from ELF..."
 
-FB_LINE=$(nm "$ELF" | grep -w nokia_fb | head -1)
+# nm -S prints: <addr> <size> <type> <name>
+FB_LINE=$(nm -S "$ELF" | grep -w nokia_fb | head -1)
 if [[ -z "$FB_LINE" ]]; then
     echo "ERROR: nokia_fb symbol not found in $ELF"
     exit 1
 fi
 FB_ADDR="0x$(echo "$FB_LINE" | awk '{print $1}')"
-echo "    nokia_fb       @ $FB_ADDR"
+FB_SIZE_HEX=$(echo "$FB_LINE" | awk '{print $2}')
+# nm -S may not always print a size; fall back to LCD-profile size
+if [[ -n "$FB_SIZE_HEX" && "$FB_SIZE_HEX" =~ ^[0-9a-fA-F]+$ ]]; then
+    FB_BYTES=$((16#$FB_SIZE_HEX))
+else
+    FB_BYTES=""   # let lcd_viewer fall back to profile dimensions
+fi
+echo "    nokia_fb       @ $FB_ADDR  (${FB_BYTES:-unknown} bytes)"
 
 KEYS_LINE=$(nm "$ELF" | grep -w nokia_keys_raw | head -1)
 if [[ -n "$KEYS_LINE" ]]; then
@@ -115,10 +138,13 @@ trap cleanup EXIT INT TERM
 # ------------------------------------------------------------------ #
 # Step 4 — launch LCD viewer (foreground, blocks until window closed) #
 # ------------------------------------------------------------------ #
-echo "==> Launching LCD viewer (scale=${SCALE}x, fps=${FPS})..."
+echo "==> Launching LCD viewer (lcd=${LCD_PROFILE}, keypad=${KEYPAD_PROFILE}, scale=${SCALE}x, fps=${FPS})..."
 echo "    Controls: ← → ↑ ↓ arrow keys + Enter/Space"
 echo "    Close the LCD window or press Ctrl+C to quit."
 echo ""
+
+FB_BYTES_ARG=""
+[[ -n "$FB_BYTES" ]] && FB_BYTES_ARG="--fb-bytes $FB_BYTES"
 
 KEYS_ARG=""
 [[ -n "$KEYS_ADDR" ]] && KEYS_ARG="--keys-address $KEYS_ADDR"
@@ -131,5 +157,8 @@ python3 tools/lcd_viewer.py \
     --port    "$RENODE_PORT" \
     --scale   "$SCALE" \
     --fps     "$FPS" \
+    --lcd     "$LCD_PROFILE" \
+    --keypad  "$KEYPAD_PROFILE" \
+    $FB_BYTES_ARG \
     $KEYS_ARG \
     $CHAR_ARG

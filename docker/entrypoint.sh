@@ -21,5 +21,13 @@ ZEPHYR_DIR="$(west list zephyr -f '{path}')"
 export ZEPHYR_BASE="${ZEPHYR_DIR}"
 source "${ZEPHYR_DIR}/zephyr-env.sh"
 
-exec "$@"
+CMAKE_ARGS=()
+[[ -n "${LCD_OVERLAY:-}" ]]     && CMAKE_ARGS+=("-DOVERLAY_CONFIG=${LCD_OVERLAY}")
+[[ -n "${LCD_DTS_OVERLAY:-}" ]] && CMAKE_ARGS+=("-DEXTRA_DTC_OVERLAY_FILE=${LCD_DTS_OVERLAY}")
+
+if [[ ${#CMAKE_ARGS[@]} -gt 0 ]]; then
+    exec "$@" -- "${CMAKE_ARGS[@]}"
+else
+    exec "$@"
+fi
 

@@ -5,7 +5,11 @@
  * rendering and navigation so the application only needs to describe *what*
  * should appear and *what* should happen when a key is pressed.
  *
- * LCD: 84 × 48 pixels (Nokia PCD8544 / 5110 format)
+ * The framework auto-scales to any supported LCD resolution.  Status bar,
+ * softkey bar, menu list, and font sizes are all derived proportionally from
+ * NOKIA_LCD_WIDTH × NOKIA_LCD_HEIGHT.  Use _UY()/_UX() and UI_CONTENT_Y in
+ * screens.c to position application-specific widgets at any resolution.
+ *
  * Keys: LEFT (left softkey), RIGHT (right softkey), UP, DOWN, OK
  *
  * Quick-start example (screens.c):
@@ -18,7 +22,7 @@
  *
  *   static const widget_t idle_widgets[] = {
  *       STATUS_BAR(),
- *       LABEL_CENTER(20, "Nokia"),
+ *       LABEL_CENTER(UI_CONTENT_Y, "Nokia"),
  *       SOFTKEY_BAR("MENU", ""),
  *   };
  *
@@ -50,11 +54,57 @@
 #endif
 
 /* ------------------------------------------------------------------ */
-/* LCD geometry — also used by tests to inspect nokia_fb               */
+/* LCD geometry — set via Kconfig (CONFIG_NOKIA_LCD_WIDTH/HEIGHT).    */
+/* Override per-build with an overlay:                                 */
+/*   west build -- -DOVERLAY_CONFIG=firmware/app/lcd_profiles/sh1107_128.conf */
+/* The fallback (84 × 48) applies to host-only builds such as tests. */
 /* ------------------------------------------------------------------ */
-#define NOKIA_LCD_WIDTH   84
-#define NOKIA_LCD_HEIGHT  48
+#ifdef CONFIG_NOKIA_LCD_WIDTH
+#  define NOKIA_LCD_WIDTH   CONFIG_NOKIA_LCD_WIDTH
+#  define NOKIA_LCD_HEIGHT  CONFIG_NOKIA_LCD_HEIGHT
+#else
+#  define NOKIA_LCD_WIDTH   84
+#  define NOKIA_LCD_HEIGHT  48
+#endif
 #define NOKIA_LCD_PAGES   (NOKIA_LCD_HEIGHT / 8)
+
+/* ------------------------------------------------------------------ */
+/* Auto-scaling layout constants                                        */
+/*                                                                      */
+/* Derived from NOKIA_LCD_WIDTH × NOKIA_LCD_HEIGHT.  On the reference  */
+/* 84×48 display every constant equals its original pixel value.        */
+/*                                                                      */
+/* Use _UY()/_UX() in screens.c to scale application coordinates.      */
+/* ------------------------------------------------------------------ */
+
+/* Integer font-scale: 1 on ≤48-row displays, 2 on 96–128-row, etc.  */
+#define UI_FONT_SCALE     (NOKIA_LCD_HEIGHT / 48)
+
+/* Single character advance at UI_FONT_SCALE (pixels).                 */
+#define UI_CHAR_W         (6 * UI_FONT_SCALE)
+#define UI_CHAR_H         (8 * UI_FONT_SCALE)
+
+/* Scale a reference coordinate from the 84×48 system to actual size. */
+#define _UY(y48)   ((y48) * NOKIA_LCD_HEIGHT / 48)
+#define _UX(x84)   ((x84) * NOKIA_LCD_WIDTH  / 84)
+
+/* Status bar (topmost area): signal bars + battery + separator.       */
+#define UI_STATUS_SEP_Y   _UY(13)
+
+/* Content area (between status bar and softkey bar).                  */
+#define UI_CONTENT_Y      _UY(14)
+
+/* Softkey bar (bottommost area): separator + key labels.              */
+#define UI_SOFTKEY_SEP_Y  _UY(39)
+#define UI_SOFTKEY_TEXT_Y _UY(41)
+
+/* Menu list: position and row sizing.                                  */
+#define UI_MENU_X         _UX(2)
+#define UI_MENU_Y         _UY(15)
+#define UI_MENU_ITEM_H    (9 * UI_FONT_SCALE)
+/* Ceiling division keeps visible count ≥ 3 on all supported displays. */
+#define UI_MENU_VISIBLE \
+    ((UI_SOFTKEY_SEP_Y - UI_MENU_Y + UI_MENU_ITEM_H - 1) / UI_MENU_ITEM_H)
 
 /*
  * Framebuffer: 6 pages × 84 bytes, 1 bit per pixel (PCD8544 format).
@@ -139,13 +189,14 @@ typedef struct {
 } widget_t;
 
 /* Widget initializer macros */
-#define LABEL(px, py, str)            { WID_LABEL,          (px), (py), 1,    (str), 0    }
-#define LABEL_SCALED(px, py, str, sc) { WID_LABEL,          (px), (py), (sc), (str), 0    }
-#define LABEL_CENTER(py, str)         { WID_LABEL_CENTERED, 0,    (py), 1,    (str), 0    }
-#define STATUS_BAR()                  { WID_STATUS_BAR,     0,    0,    1,    0,     0    }
-#define SOFTKEY_BAR(l, r)             { WID_SOFTKEY_BAR,    0,    40,   1,    (l),   (r)  }
-#define HLINE(py)                     { WID_HLINE,          0,    (py), 1,    0,     0    }
-#define MENU_LIST()                   { WID_MENU_LIST,      2,    15,   1,    0,     0    }
+#define LABEL(px, py, str)               { WID_LABEL,          (px), (py), 1,    (str), 0    }
+#define LABEL_SCALED(px, py, str, sc)    { WID_LABEL,          (px), (py), (sc), (str), 0    }
+#define LABEL_CENTER(py, str)            { WID_LABEL_CENTERED, 0,    (py), 1,    (str), 0    }
+#define LABEL_CENTER_SCALED(py, str, sc) { WID_LABEL_CENTERED, 0,    (py), (sc), (str), 0    }
+#define STATUS_BAR()                     { WID_STATUS_BAR,     0,    0,    1,    0,     0    }
+#define SOFTKEY_BAR(l, r)                { WID_SOFTKEY_BAR,    0, UI_SOFTKEY_SEP_Y, 1, (l), (r) }
+#define HLINE(py)                        { WID_HLINE,          0,    (py), 1,    0,     0    }
+#define MENU_LIST()                      { WID_MENU_LIST, UI_MENU_X, UI_MENU_Y, 1, 0, 0 }
 
 /* ------------------------------------------------------------------ */
 /* Menu items (used by SCREEN_MENU)                                     */

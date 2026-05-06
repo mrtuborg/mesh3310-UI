@@ -1,6 +1,7 @@
 #include <zephyr/kernel.h>
 #include <zephyr/sys/printk.h>
 #include "ui_framework.h"
+#include "display.h"
 
 /*
  * Memory-mapped button state.
@@ -29,6 +30,10 @@ int main(void)
 {
     printk("Nokia3310 UI starting...\n");
 
+    if (display_init() != 0) {
+        printk("Warning: display init failed, continuing anyway\n");
+    }
+
     ui_init(g_screens, g_screen_count, 0);
 
     while (1) {
@@ -39,6 +44,7 @@ int main(void)
         }
 
         ui_tick();
+        display_flush();
         k_sleep(K_MSEC(100));
     }
 

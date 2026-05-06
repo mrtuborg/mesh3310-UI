@@ -11,3 +11,9 @@ target_sources(app PRIVATE
     src/applet_messages.c
 )
 
+target_sources_ifdef(CONFIG_NOKIA_BACKEND_SH1107_I2C app PRIVATE
+    src/display.c
+    src/display_transform.c
+    src/display_sh1107.c
+)
+

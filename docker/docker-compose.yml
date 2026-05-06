@@ -6,10 +6,13 @@ services:
     volumes:
       - ..:/work          # ← repo root
     working_dir: /work
+    environment:
+      - LCD_OVERLAY=${LCD_OVERLAY:-}
+      - LCD_DTS_OVERLAY=${LCD_DTS_OVERLAY:-}
     entrypoint: ["/work/docker/entrypoint.sh"]
     command: >
      west build
-     -b nrf52dk_nrf52805
+     -b xiao_ble
      firmware/app
      -d build
 
