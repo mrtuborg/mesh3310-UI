@@ -32,12 +32,12 @@
 /* ------------------------------------------------------------------ */
 /* Grid geometry                                                        */
 /* ------------------------------------------------------------------ */
-#define CELL          4                              /* pixels per cell */
-#define GW            (NOKIA_LCD_WIDTH  / CELL)      /* 21 columns      */
-#define GH            ((NOKIA_LCD_HEIGHT - 8) / CELL)/* 10 rows         */
-#define GAME_Y        8                              /* top of game area */
+#define CELL          (4 * UI_FONT_SCALE)            /* pixels per cell */
+#define GW            (NOKIA_LCD_WIDTH  / CELL)      /* columns         */
+#define GH            ((NOKIA_LCD_HEIGHT - _UY(8)) / CELL) /* rows     */
+#define GAME_Y        _UY(8)                         /* top of game area */
 #define SNAKE_MAX     55                             /* max snake length */
-#define INITIAL_SPEED 4                              /* ticks per move   */
+#define INITIAL_SPEED 2                              /* ticks per move   */
 
 /* ------------------------------------------------------------------ */
 /* State                                                                */
@@ -156,8 +156,8 @@ static void snake_move(void)
 
     if (ate) {
         g_score++;
-        /* Speed up every 3 food items, cap at 1 tick/move (10 Hz) */
-        g_speed = INITIAL_SPEED - g_score / 3;
+        /* Speed up every 3 food items, cap at 1 tick/move */
+        g_speed = INITIAL_SPEED - g_score / 5;
         if (g_speed < 1) g_speed = 1;
         place_food();
     }
@@ -184,10 +184,10 @@ static void snake_render(void)
     if (g_game_over) {
         char buf[16];
         snprintf(buf, sizeof(buf), "SCORE: %d", g_score);
-        ui_fb_text_inv(15, 3,  "  GAME OVER  ");
-        ui_fb_text(17,     15, buf);
-        ui_fb_text(1,      28, "OK:replay");
-        ui_fb_text(1,      37, "RIGHT:menu");
+        ui_fb_text_inv(_UX(15), _UY(3),  "  GAME OVER  ");
+        ui_fb_text(_UX(17),     _UY(15), buf);
+        ui_fb_text(_UX(1),      _UY(28), "OK:replay");
+        ui_fb_text(_UX(1),      _UY(37), "RIGHT:menu");
         return;
     }
 
@@ -196,19 +196,21 @@ static void snake_render(void)
         char buf[8];
         snprintf(buf, sizeof(buf), "%d", g_score);
         ui_fb_text(0, 0, "SNAKE");
-        int sx = NOKIA_LCD_WIDTH - (int)strlen(buf) * 6;
+        int sx = NOKIA_LCD_WIDTH - (int)strlen(buf) * UI_CHAR_W;
         if (sx > 0) ui_fb_text(sx, 0, buf);
     }
 
     /* Divider */
     ui_fb_hline(GAME_Y - 1, 0, NOKIA_LCD_WIDTH - 1);
 
-    /* Food — 2×2 dot centred in its cell */
-    ui_fb_rect(g_food.x * CELL + 1,
-               GAME_Y + g_food.y * CELL + 1,
-               2, 2);
+    /* Food — small dot centred in its cell */
+    int food_sz = CELL / 2;
+    int food_off = (CELL - food_sz) / 2;
+    ui_fb_rect(g_food.x * CELL + food_off,
+               GAME_Y + g_food.y * CELL + food_off,
+               food_sz, food_sz);
 
-    /* Snake body — 3×3 blocks with 1 px gap; head is a solid 4×4 */
+    /* Snake body — blocks with 1 px gap; head is solid full cell */
     for (int i = 0; i < g_len - 1; i++) {
         ui_fb_rect(g_body[i].x * CELL,
                    GAME_Y + g_body[i].y * CELL,
@@ -218,14 +220,14 @@ static void snake_render(void)
         int i = g_len - 1;
         ui_fb_rect(g_body[i].x * CELL,
                    GAME_Y + g_body[i].y * CELL,
-                   CELL, CELL);   /* head: full cell, visually distinct */
+                   CELL, CELL);
     }
 
     /* Pause overlay */
     if (g_paused) {
-        ui_fb_text_inv(25, 19, " PAUSE ");
-        ui_fb_text(1, 28, "OK:resume");
-        ui_fb_text(1, 37, "RIGHT:menu");
+        ui_fb_text_inv(_UX(25), _UY(19), " PAUSE ");
+        ui_fb_text(_UX(1), _UY(28), "OK:resume");
+        ui_fb_text(_UX(1), _UY(37), "RIGHT:menu");
     }
 }
 

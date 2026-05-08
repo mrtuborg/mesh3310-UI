@@ -84,3 +84,34 @@ config NOKIA_SH1107_COM_REMAP
 	  Use when the display panel is wired with COM scan reversed.
 
 endmenu
+
+menu "Keypad"
+
+config NOKIA_KEYPAD_MCP23008
+	bool "4×4 matrix keypad via MCP23008 I²C expander"
+	depends on NOKIA_BACKEND_SH1107_I2C
+	select I2C
+	help
+	  Enables the MCP23008 GPIO-expander keypad driver.
+	  GP0–GP3 are row outputs; GP4–GP7 are column inputs with pull-ups.
+	  Matches the "4x4_mcp23008" keypad profile in lcd_viewer.py.
+
+config NOKIA_MCP23008_I2C_ADDR
+	hex "MCP23008 I2C address (7-bit)"
+	default 0x20
+	depends on NOKIA_KEYPAD_MCP23008
+	help
+	  7-bit I2C address of the MCP23008.  Set by hardware pins A0–A2:
+	  all low → 0x20, A0 high → 0x21, etc.
+
+config NOKIA_KEYPAD_ROTATION
+	int "Keypad rotation (degrees clockwise)"
+	default 0
+	range 0 270
+	depends on NOKIA_KEYPAD_MCP23008
+	help
+	  Rotate the directional keys clockwise.  Valid values: 0, 90, 180, 270.
+	  Use this when the keypad PCB is mounted at an angle relative to the
+	  display.  Only affects UP/DOWN/LEFT/RIGHT — OK is unchanged.
+
+endmenu

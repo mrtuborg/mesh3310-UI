@@ -42,18 +42,18 @@ extern volatile uint8_t nokia_char_raw;
 /* Constants                                                            */
 /* ------------------------------------------------------------------ */
 #define MSG_MAX_LEN      64        /* max chars in compose buffer      */
-#define CHARS_PER_LINE   14        /* 6 px/char x 14 = 84 px           */
+#define CHARS_PER_LINE   (NOKIA_LCD_WIDTH / UI_CHAR_W)
 #define T9_TIMEOUT       8         /* ticks before pending char commits */
 #define INBOX_COUNT      3
 #define SENT_HOLD_TICKS  15        /* auto-dismiss "Sent!" after 1.5 s  */
 
-/* Vertical layout (pixels) */
-#define TITLE_Y          1
-#define HLINE_Y          9
-#define CONTENT_Y        12        /* first content row                 */
-#define CONTENT_ROW_H    9         /* pixels per text row               */
-#define SK_HLINE_Y       39
-#define SK_TEXT_Y        41
+/* Vertical layout (scaled) */
+#define TITLE_Y          _UY(1)
+#define HLINE_Y          (_UY(1) + UI_CHAR_H)
+#define CONTENT_Y        (HLINE_Y + _UY(3))
+#define CONTENT_ROW_H    (UI_CHAR_H + 1)
+#define SK_HLINE_Y       UI_SOFTKEY_SEP_Y
+#define SK_TEXT_Y        UI_SOFTKEY_TEXT_Y
 
 /* ------------------------------------------------------------------ */
 /* T9 character map                                                     */
@@ -178,7 +178,7 @@ static void compose_reset(void)
 static void draw_title(const char *title)
 {
     int len = (int)strlen(title);
-    int x   = (NOKIA_LCD_WIDTH - len * 6) / 2;
+    int x   = (NOKIA_LCD_WIDTH - len * UI_CHAR_W) / 2;
     if (x < 0) x = 0;
     ui_fb_text(x, TITLE_Y, title);
     ui_fb_hline(HLINE_Y, 0, NOKIA_LCD_WIDTH - 1);
@@ -189,7 +189,7 @@ static void draw_softkeys(const char *left_sk, const char *right_sk)
     ui_fb_hline(SK_HLINE_Y, 0, NOKIA_LCD_WIDTH - 1);
     if (left_sk  && *left_sk)  ui_fb_text(1, SK_TEXT_Y, left_sk);
     if (right_sk && *right_sk) {
-        int rx = NOKIA_LCD_WIDTH - (int)strlen(right_sk) * 6 - 1;
+        int rx = NOKIA_LCD_WIDTH - (int)strlen(right_sk) * UI_CHAR_W - 1;
         if (rx < 0) rx = 0;
         ui_fb_text(rx, SK_TEXT_Y, right_sk);
     }
@@ -198,11 +198,10 @@ static void draw_softkeys(const char *left_sk, const char *right_sk)
 /* Render one inbox row; selected rows are inverted */
 static void draw_inbox_row(int idx, int y, bool selected)
 {
-    char line[CHARS_PER_LINE + 1];
+    char line[22]; /* enough for widest display (128/6=21 chars) */
     snprintf(line, sizeof(line), "%s: %s", INBOX_FROM[idx], INBOX_TEXT[idx]);
 
     if (selected) {
-        /* Fill a highlight bar, then draw text inverted (XOR -> white text) */
         ui_fb_rect(0, y - 1, NOKIA_LCD_WIDTH, CONTENT_ROW_H);
         ui_fb_text_inv(0, y, line);
     } else {
@@ -274,10 +273,12 @@ static void msg_render(void)
         int         pos  = 0;
         int         line = 0;
         int         tlen = (int)strlen(text);
-        while (pos < tlen && line < 3) {
-            char   row[CHARS_PER_LINE + 1];
+        int         max_lines = (SK_HLINE_Y - CONTENT_Y) / CONTENT_ROW_H;
+        while (pos < tlen && line < max_lines) {
+            char   row[22];
             int    n = tlen - pos;
             if (n > CHARS_PER_LINE) n = CHARS_PER_LINE;
+            if (n > (int)sizeof(row) - 1) n = (int)sizeof(row) - 1;
             memcpy(row, text + pos, n);
             row[n] = '\0';
             ui_fb_text(0, CONTENT_Y + line * CONTENT_ROW_H, row);
@@ -294,13 +295,14 @@ static void msg_render(void)
         draw_title(t9_upper ? "Write Msg [A]" : "Write Msg [a]");
 
         /*
-         * Display the last 3 lines of the compose buffer.
+         * Display visible lines of the compose buffer.
          * The cursor always sits on cursor_line; scroll so it stays visible.
          */
+        int max_lines   = (SK_HLINE_Y - CONTENT_Y) / CONTENT_ROW_H;
         int cursor_line = compose_len / CHARS_PER_LINE;
-        int start_line  = (cursor_line >= 3) ? (cursor_line - 2) : 0;
+        int start_line  = (cursor_line >= max_lines) ? (cursor_line - max_lines + 1) : 0;
 
-        for (int row = 0; row < 3; row++) {
+        for (int row = 0; row < max_lines; row++) {
             int src  = start_line + row;
             int y    = CONTENT_Y + row * CONTENT_ROW_H;
             int coff = src * CHARS_PER_LINE;  /* char offset for this line */
@@ -320,18 +322,18 @@ static void msg_render(void)
 
             /* Cursor / pending T9 char  -  only on the active line */
             if (src == cursor_line) {
-                int cx = n * 6;
-                if (cx > NOKIA_LCD_WIDTH - 6) cx = NOKIA_LCD_WIDTH - 6;
+                int cx = n * UI_CHAR_W;
+                if (cx > NOKIA_LCD_WIDTH - UI_CHAR_W) cx = NOKIA_LCD_WIDTH - UI_CHAR_W;
 
                 if (t9_key >= 0) {
                     /* Pending char: fill cell, then draw inverted */
-                    ui_fb_rect(cx, y - 1, 6, CONTENT_ROW_H);
+                    ui_fb_rect(cx, y - 1, UI_CHAR_W, CONTENT_ROW_H);
                     char pending[2] = { t9_pending_char(), '\0' };
                     ui_fb_text_inv(cx, y, pending);
                 } else {
                     /* Blinking underscore cursor (toggles every 4 ticks) */
                     if ((blink_ticks >> 2) & 1) {
-                        ui_fb_hline(y + 7, cx, cx + 4);
+                        ui_fb_hline(y + UI_CHAR_H - 1, cx, cx + UI_CHAR_W - 2);
                     }
                 }
             }
@@ -345,8 +347,8 @@ static void msg_render(void)
     case MS_SENT:
         draw_title("Messages");
         /* Centred confirmation banner */
-        ui_fb_rect(0, 18, NOKIA_LCD_WIDTH, 11);
-        ui_fb_text_inv(3, 20, "  Message sent!  ");
+        ui_fb_rect(0, _UY(18), NOKIA_LCD_WIDTH, CONTENT_ROW_H + 2);
+        ui_fb_text_inv(_UX(3), _UY(20), "  Message sent!  ");
         draw_softkeys("", "OK");
         break;
     }

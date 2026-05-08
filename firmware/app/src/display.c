@@ -1,13 +1,14 @@
 #include "display.h"
+#include "display_sh1107.h"
 
 #ifdef CONFIG_NOKIA_BACKEND_SH1107_I2C
 
 #include <stdbool.h>
 #include <zephyr/kernel.h>
 #include <zephyr/drivers/gpio.h>
+#include <zephyr/drivers/i2c.h>
 #include <zephyr/sys/printk.h>
 
-#include "display_sh1107.h"
 #include "display_transform.h"
 #include "ui_framework.h"
 
@@ -87,6 +88,7 @@ void display_flush(void)
     }
 
     static bool hb;
+    static int err_count;
     uint8_t buf[NOKIA_LCD_WIDTH];
 
     hb = !hb;
@@ -98,13 +100,25 @@ void display_flush(void)
         display_transform_page(page, buf);
         ret = sh1107_write_page(page, buf);
         if (ret) {
-            display_ready = false;
-            led_set(1, false);
-            led_set(0, true);
-            printk("display: page %d write failed (%d)\n", page, ret);
+            err_count++;
+            printk("display: page %d failed (%d) [%d]\n",
+                   page, ret, err_count);
+
+            /* Try to unstick the bus */
+            const struct device *bus = DEVICE_DT_GET(DT_NODELABEL(i2c1));
+            i2c_recover_bus(bus);
+            k_sleep(K_MSEC(5));
+
+            if (err_count >= 20) {
+                display_ready = false;
+                led_set(1, false);
+                led_set(0, true);
+                printk("display: too many errors, disabling\n");
+            }
             return;
         }
     }
+    err_count = 0;
 }
 
 #endif

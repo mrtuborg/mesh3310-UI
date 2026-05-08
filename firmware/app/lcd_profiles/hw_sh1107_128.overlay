@@ -1,0 +1,4 @@
+/* Slow I2C to 100 kHz for breadboard reliability */
+&i2c1 {
+	clock-frequency = <I2C_BITRATE_STANDARD>;
+};

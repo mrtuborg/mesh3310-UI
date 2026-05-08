@@ -15,7 +15,12 @@ fi
 
 # Hardware profiles are prefixed with hw_; everything else is a sim profile.
 if [[ "$LCD_PROFILE" == hw_* ]]; then
-    export LCD_DTS_OVERLAY=""
+    HW_OVERLAY="$REPO_ROOT/firmware/app/lcd_profiles/${LCD_PROFILE}.overlay"
+    if [[ -f "$HW_OVERLAY" ]]; then
+        export LCD_DTS_OVERLAY="/work/firmware/app/lcd_profiles/${LCD_PROFILE}.overlay"
+    else
+        export LCD_DTS_OVERLAY=""
+    fi
 else
     # Simulator build: disable USBD node to prevent the nRF USB driver from
     # busy-looping on USBD:EVENTCAUSE which Renode does not simulate.

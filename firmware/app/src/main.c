@@ -2,6 +2,13 @@
 #include <zephyr/sys/printk.h>
 #include "ui_framework.h"
 #include "display.h"
+#ifdef CONFIG_NOKIA_KEYPAD_MCP23008
+#include "keypad_mcp23008.h"
+#endif
+#ifdef CONFIG_USB_DEVICE_STACK
+#include <zephyr/usb/usb_device.h>
+#include <zephyr/drivers/uart.h>
+#endif
 
 /*
  * Memory-mapped button state.
@@ -28,11 +35,31 @@ extern const int          g_screen_count;
 
 int main(void)
 {
+#ifdef CONFIG_USB_DEVICE_STACK
+    /* Enable USB and wait up to 3 s for a host terminal (DTR).
+     * The board continues normally if nobody connects. */
+    usb_enable(NULL);
+    const struct device *cdc = DEVICE_DT_GET(DT_CHOSEN(zephyr_console));
+    if (device_is_ready(cdc)) {
+        uint32_t dtr = 0;
+        for (int i = 0; i < 30 && !dtr; i++) {
+            uart_line_ctrl_get(cdc, UART_LINE_CTRL_DTR, &dtr);
+            k_sleep(K_MSEC(100));
+        }
+    }
+#endif
+
     printk("Nokia3310 UI starting...\n");
 
     if (display_init() != 0) {
         printk("Warning: display init failed, continuing anyway\n");
     }
+
+#ifdef CONFIG_NOKIA_KEYPAD_MCP23008
+    if (keypad_mcp23008_init() != 0) {
+        printk("Warning: keypad init failed, hardware keys disabled\n");
+    }
+#endif
 
     ui_init(g_screens, g_screen_count, 0);
 
@@ -43,9 +70,16 @@ int main(void)
             ui_inject_key((nokia_key_t)k);
         }
 
+#ifdef CONFIG_NOKIA_KEYPAD_MCP23008
+        nokia_key_t hw_key = keypad_mcp23008_poll();
+        if (hw_key != KEY_NONE) {
+            ui_inject_key(hw_key);
+        }
+#endif
+
         ui_tick();
         display_flush();
-        k_sleep(K_MSEC(100));
+        k_sleep(K_MSEC(5));
     }
 
     return 0;

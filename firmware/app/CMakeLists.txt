@@ -17,3 +17,7 @@ target_sources_ifdef(CONFIG_NOKIA_BACKEND_SH1107_I2C app PRIVATE
     src/display_sh1107.c
 )
 
+target_sources_ifdef(CONFIG_NOKIA_KEYPAD_MCP23008 app PRIVATE
+    src/keypad_mcp23008.c
+)
+
